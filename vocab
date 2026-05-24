@@ -1,0 +1,238 @@
+#!/bin/bash
+#
+#  vocab - English/Turkish vocabulary tool
+#  ena ~ github.com/whyghost
+#  ingilizce çalışmak isteyenler için yapıldı
+
+DB="$HOME/.vocab.sqlite"
+
+init_db() {
+    sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS vocabulary (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        eng_word TEXT NOT NULL,
+        tur_word TEXT NOT NULL
+    );"
+}
+
+translate() {
+    local word="$1" pair="$2"
+    python3 - "$word" "$pair" <<'EOF'
+import sys, urllib.request, urllib.parse, json
+
+q    = urllib.parse.quote(sys.argv[1])
+pair = sys.argv[2]
+
+try:
+    raw  = urllib.request.urlopen(
+               f"https://api.mymemory.translated.net/get?q={q}&langpair={pair}",
+               timeout=8
+           ).read()
+    data = json.loads(raw.decode("utf-8"))
+except:
+    sys.exit(1)
+
+out = data.get("responseData", {}).get("translatedText", "").strip()
+if not out or out.upper() == sys.argv[1].upper():
+    sys.exit(1)
+
+print(out)
+EOF
+}
+
+# türkçe, ağzımda anamın ak sütüdür -yahya kemal beyatlı
+is_turkish() {
+    echo "$1" | grep -qP '[çÇğĞıİöÖşŞüÜ]'
+}
+
+# tek kelime ekler, cmd_add içinden çağrılıyor
+_add_one() {
+    local word="$1" meaning="$2"
+
+    if [ -n "$meaning" ]; then
+        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$word', '$meaning');"
+        echo "$word -> $meaning"
+        return
+    fi
+
+    echo "looking up '$word'..."
+
+    local eng tur
+    if is_turkish "$word"; then
+        eng=$(translate "$word" "tr|en") || { echo "  couldn't fetch '$word'" >&2; return 1; }
+        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$eng', '$word');"
+        echo "$eng -> $word"
+    else
+        tur=$(translate "$word" "en|tr") || { echo "  couldn't fetch '$word'" >&2; return 1; }
+        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$word', '$tur');"
+        echo "$word -> $tur"
+    fi
+}
+
+cmd_add() {
+    [ -z "$1" ] && { echo "usage: vocab add <word> [word2 word3 ...]" >&2; exit 1; }
+
+    # iki argüman ve ikincisi tırnak içindeyse manual add
+    if [ $# -eq 2 ] && [[ "$2" != -* ]]; then
+        _add_one "$1" "$2"
+        return
+    fi
+
+    for word in "$@"; do
+        _add_one "$word"
+    done
+}
+
+# tek kelime siler
+_del_one() {
+    local target="$1"
+
+    local rows
+    if [[ "$target" =~ ^[0-9]+$ ]]; then
+        rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary WHERE id = $target;")
+    else
+        rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary
+               WHERE eng_word LIKE '$target' OR tur_word LIKE '$target';")
+    fi
+
+    [ -z "$rows" ] && { echo "  not found: '$target'" >&2; return 1; }
+
+    if [ "$(echo "$rows" | wc -l)" -gt 1 ]; then
+        echo "multiple matches for '$target':"
+        local i=1
+        while IFS='|' read -r id eng tur; do
+            echo "  $i) $eng -> $tur  [id:$id]"
+            (( i++ ))
+        done <<< "$rows"
+        echo "  0) skip"
+        read -rp "> " choice
+        if [[ "$choice" == "0" ]] || ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -ge "$i" ]; then
+            echo "  skipped."; return
+        fi
+        rows=$(echo "$rows" | sed -n "${choice}p")
+    fi
+
+    local row="$rows" id eng tur
+    id="${row%%|*}"; row="${row#*|}"
+    eng="${row%%|*}"; tur="${row##*|}"
+
+    sqlite3 "$DB" "DELETE FROM vocabulary WHERE id = $id;"
+    echo "deleted: $eng -> $tur"
+}
+
+cmd_delete() {
+    [ -z "$1" ] && { echo "usage: vocab delete <id|word|all> [word2 ...]" >&2; exit 1; }
+
+    if [ "$1" = "all" ]; then
+        read -rp "delete everything? [y/N] " c
+        [[ "$c" =~ ^[yY]$ ]] && sqlite3 "$DB" "DELETE FROM vocabulary;" && echo "done." || echo "cancelled."
+        return
+    fi
+
+    # birden fazla hedef varsa onaysız sil, tekse sor
+    if [ $# -gt 1 ]; then
+        read -rp "delete $# entries? [y/N] " c
+        [[ "$c" =~ ^[yY]$ ]] || { echo "cancelled."; return; }
+        for target in "$@"; do
+            _del_one "$target"
+        done
+    else
+        local target="$1" rows
+        if [[ "$target" =~ ^[0-9]+$ ]]; then
+            rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary WHERE id = $target;")
+        else
+            rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary
+                   WHERE eng_word LIKE '$target' OR tur_word LIKE '$target';")
+        fi
+        [ -z "$rows" ] && { echo "not found: '$target'" >&2; exit 1; }
+
+        if [ "$(echo "$rows" | wc -l)" -gt 1 ]; then
+            echo "multiple matches:"
+            local i=1
+            while IFS='|' read -r id eng tur; do
+                echo "  $i) $eng -> $tur  [id:$id]"
+                (( i++ ))
+            done <<< "$rows"
+            echo "  0) cancel"
+            read -rp "> " choice
+            if [[ "$choice" == "0" ]] || ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -ge "$i" ]; then
+                echo "cancelled."; return
+            fi
+            rows=$(echo "$rows" | sed -n "${choice}p")
+        fi
+
+        local row="$rows" id eng tur
+        id="${row%%|*}"; row="${row#*|}"
+        eng="${row%%|*}"; tur="${row##*|}"
+
+        read -rp "delete '$eng -> $tur'? [y/N] " c
+        [[ "$c" =~ ^[yY]$ ]] && sqlite3 "$DB" "DELETE FROM vocabulary WHERE id = $id;" && echo "deleted." || echo "cancelled."
+    fi
+}
+
+cmd_quiz() {
+    local count
+    count=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
+    [ "$count" -eq 0 ] && { echo "no words yet." >&2; exit 1; }
+
+    local row eng tur
+    row=$(sqlite3 "$DB" "SELECT eng_word, tur_word FROM vocabulary ORDER BY RANDOM() LIMIT 1;")
+    eng="${row%%|*}"; tur="${row##*|}"
+
+    if (( RANDOM % 2 == 0 )); then
+        read -rp "$eng ? " _
+        echo "-> $tur"
+    else
+        read -rp "$tur ? " _
+        echo "-> $eng"
+    fi
+}
+
+cmd_list() {
+    local count
+    count=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
+    [ "$count" -eq 0 ] && { echo "no words yet." >&2; exit 1; }
+
+    sqlite3 -column -header "$DB" \
+        "SELECT id, eng_word AS 'en', tur_word AS 'tr' FROM vocabulary;"
+    echo "($count words)"
+}
+
+cmd_about() {
+    cat <<'EOF'
+
+  ██╗   ██╗ ██████╗  ██████╗ █████╗ ██████╗
+  ██║   ██║██╔═══██╗██╔════╝██╔══██╗██╔══██╗
+  ██║   ██║██║   ██║██║     ███████║██████╔╝
+  ╚██╗ ██╔╝██║   ██║██║     ██╔══██║██╔══██╗
+   ╚████╔╝ ╚██████╔╝╚██████╗██║  ██║██████╔╝
+    ╚═══╝   ╚═════╝  ╚═════╝╚═╝  ╚═╝╚═════╝
+
+  made for myself, might work for you too
+
+  ena ~ github.com/whyghost
+
+EOF
+}
+
+usage() {
+    cat <<EOF
+vocab add <word> [word2 ...]       auto-translate one or more
+vocab add <word> "meaning"         manual add
+vocab delete <id|word> [word2 ...] delete one or more
+vocab delete all                   clear everything
+vocab quiz                         test yourself
+vocab list                         show all
+vocab about
+EOF
+}
+
+init_db
+
+case "$1" in
+    add)    shift; cmd_add    "$@" ;;
+    delete) shift; cmd_delete "$@" ;;
+    quiz)   cmd_quiz              ;;
+    list)   cmd_list              ;;
+    about)  cmd_about             ;;
+    *)      usage                 ;;
+esac
