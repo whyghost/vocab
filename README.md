@@ -32,6 +32,8 @@
 
 **Bu proje daha yapım aşamasındadır. Eksikliklerin farkındayım, en kısa süre içerisinde düzelteceğim. Anlayışınız için teşekkürler.**
 
+##
+
 Linux terminali üzerinden İngilizce - Türkçe kelime tekrarı yapmak istediğinde, yeni kelimeler öğrenmek veya unuttuğun kelimeleri kaydederek tekrar etmeni sağlar.
 
 Çeviriler için MyMemory API kullanır ve kelimeleri yerel SQLite veritabanında saklar.
