@@ -25,8 +25,12 @@
     <img src="https://img.shields.io/github/stars/whyghost/vocab?style=social" alt="Stars">
   </a>
 </p>
+
 > English/Turkish CLI vocabulary tool for language learners.
 
+## Uyarı!
+
+**Bu proje daha yapım aşamasındadır. Eksikliklerin farkındayım, en kısa süre içerisinde düzelteceğim. Anlayışınız için teşekkürler.**
 
 Linux terminali üzerinden İngilizce - Türkçe kelime tekrarı yapmak istediğinde, yeni kelimeler öğrenmek veya unuttuğun kelimeleri kaydederek tekrar etmeni sağlar.
 
