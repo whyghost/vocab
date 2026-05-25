@@ -6,12 +6,24 @@
 
 DB="$HOME/.vocab.sqlite"
 
+# colors
+if [ -t 1 ]; then
+    GREEN=$(tput setaf 2 2>/dev/null);  RED=$(tput setaf 1 2>/dev/null)
+    YELLOW=$(tput setaf 3 2>/dev/null); BOLD=$(tput bold 2>/dev/null)
+    RESET=$(tput sgr0 2>/dev/null)
+else
+    GREEN=; RED=; YELLOW=; BOLD=; RESET=
+fi
+
 init_db() {
     sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS vocabulary (
-        id       INTEGER PRIMARY KEY AUTOINCREMENT,
-        eng_word TEXT NOT NULL,
-        tur_word TEXT NOT NULL
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        eng_word   TEXT NOT NULL,
+        tur_word   TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
     );"
+    # add created_at column to old databases (if missing)
+    sqlite3 "$DB" "ALTER TABLE vocabulary ADD COLUMN created_at TEXT DEFAULT (datetime('now','localtime'));" 2>/dev/null || true
 }
 
 translate() {
@@ -19,19 +31,18 @@ translate() {
     python3 - "$word" "$pair" <<'EOF'
 import sys, urllib.request, urllib.parse, json
 
-q    = urllib.parse.quote(sys.argv[1])
-pair = sys.argv[2]
+q     = urllib.parse.quote(sys.argv[1])
+pair  = sys.argv[2]
+src, tgt = pair.split('|')
 
 try:
-    raw  = urllib.request.urlopen(
-               f"https://api.mymemory.translated.net/get?q={q}&langpair={pair}",
-               timeout=8
-           ).read()
+    url  = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={src}&tl={tgt}&dt=t&q={q}"
+    raw  = urllib.request.urlopen(url, timeout=8).read()
     data = json.loads(raw.decode("utf-8"))
+    out  = data[0][0][0].strip()
 except:
     sys.exit(1)
 
-out = data.get("responseData", {}).get("translatedText", "").strip()
 if not out or out.upper() == sys.argv[1].upper():
     sys.exit(1)
 
@@ -39,16 +50,18 @@ print(out)
 EOF
 }
 
-# türkçe, ağzımda anamın ak sütüdür -yahya kemal beyatlı
+# check if word contains turkish characters
 is_turkish() {
     echo "$1" | grep -qP '[çÇğĞıİöÖşŞüÜ]'
 }
 
-# tek kelime ekler, cmd_add içinden çağrılıyor
+# add single word, called by cmd_add
 _add_one() {
     local word="$1" meaning="$2"
+    word="${word//\'/\'\'}"
 
     if [ -n "$meaning" ]; then
+        meaning="${meaning//\'/\'\'}"
         sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$word', '$meaning');"
         echo "$word -> $meaning"
         return
@@ -59,10 +72,12 @@ _add_one() {
     local eng tur
     if is_turkish "$word"; then
         eng=$(translate "$word" "tr|en") || { echo "  couldn't fetch '$word'" >&2; return 1; }
+        eng="${eng//\'/\'\'}"
         sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$eng', '$word');"
         echo "$eng -> $word"
     else
         tur=$(translate "$word" "en|tr") || { echo "  couldn't fetch '$word'" >&2; return 1; }
+        tur="${tur//\'/\'\'}"
         sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$word', '$tur');"
         echo "$word -> $tur"
     fi
@@ -71,7 +86,7 @@ _add_one() {
 cmd_add() {
     [ -z "$1" ] && { echo "usage: vocab add <word> [word2 word3 ...]" >&2; exit 1; }
 
-    # iki argüman ve ikincisi tırnak içindeyse manual add
+    # two args and second is quoted -> manual add
     if [ $# -eq 2 ] && [[ "$2" != -* ]]; then
         _add_one "$1" "$2"
         return
@@ -82,9 +97,39 @@ cmd_add() {
     done
 }
 
-# tek kelime siler
+cmd_translate() {
+    [ -z "$1" ] && { echo "usage: vocab translate <word>" >&2; exit 1; }
+    local word="$1"
+    if is_turkish "$word"; then
+        local en
+        en=$(translate "$word" "tr|en") || { echo "  couldn't fetch '$word'" >&2; exit 1; }
+        echo "$en"
+    else
+        local tr
+        tr=$(translate "$word" "en|tr") || { echo "  couldn't fetch '$word'" >&2; exit 1; }
+        echo "$tr"
+    fi
+}
+
+cmd_search() {
+    [ -z "$1" ] && { echo "usage: vocab search <word>" >&2; exit 1; }
+    local term="$1"
+    term="${term//\'/\'\'}"
+    local rows
+    rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word, created_at FROM vocabulary
+           WHERE eng_word LIKE '%$term%' OR tur_word LIKE '%$term%'
+           ORDER BY eng_word, tur_word;")
+    [ -z "$rows" ] && { echo "  not found: '$1'" >&2; exit 1; }
+    printf "%-4s %-15s %-15s %s\n" "id" "en" "tr" "date"
+    while IFS='|' read -r id eng tur date; do
+        printf "%-4s %-15s %-15s %s\n" "$id" "$eng" "$tur" "$date"
+    done <<< "$rows"
+}
+
+# delete single word by id or text
 _del_one() {
     local target="$1"
+    target="${target//\'/\'\'}"
 
     local rows
     if [[ "$target" =~ ^[0-9]+$ ]]; then
@@ -128,7 +173,7 @@ cmd_delete() {
         return
     fi
 
-    # birden fazla hedef varsa onaysız sil, tekse sor
+    # multiple targets -> no confirm, single -> ask
     if [ $# -gt 1 ]; then
         read -rp "delete $# entries? [y/N] " c
         [[ "$c" =~ ^[yY]$ ]] || { echo "cancelled."; return; }
@@ -136,14 +181,15 @@ cmd_delete() {
             _del_one "$target"
         done
     else
-        local target="$1" rows
+        local orig="$1" rows
+        local target="${orig//\'/\'\'}"
         if [[ "$target" =~ ^[0-9]+$ ]]; then
             rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary WHERE id = $target;")
         else
             rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary
                    WHERE eng_word LIKE '$target' OR tur_word LIKE '$target';")
         fi
-        [ -z "$rows" ] && { echo "not found: '$target'" >&2; exit 1; }
+        [ -z "$rows" ] && { echo "not found: '$orig'" >&2; exit 1; }
 
         if [ "$(echo "$rows" | wc -l)" -gt 1 ]; then
             echo "multiple matches:"
@@ -169,22 +215,160 @@ cmd_delete() {
     fi
 }
 
+cmd_export() {
+    sqlite3 "$DB" "SELECT json_group_array(json_object('id',id,'en',eng_word,'tr',tur_word,'date',created_at))
+                   FROM vocabulary;" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, indent=2))"
+}
+
+cmd_import() {
+    local file="$1"
+    [ -z "$file" ] && { echo "usage: vocab import <file.json>" >&2; exit 1; }
+    [ ! -f "$file" ] && { echo "  file not found: $file" >&2; exit 1; }
+    local before after
+    before=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
+    python3 -c "
+import sys, json
+with open('$file') as f:
+    data = json.load(f)
+for entry in data:
+    en = entry.get('en', entry.get('eng_word', entry.get('eng', ''))).replace(\"'\", \"''\")
+    tr = entry.get('tr', entry.get('tur_word', entry.get('tur', ''))).replace(\"'\", \"''\")
+    print(f\"INSERT INTO vocabulary (eng_word, tur_word) VALUES ('{en}', '{tr}');\")
+" | sqlite3 "$DB"
+    after=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
+    echo "  imported: $((after - before)) new words"
+}
+
+cmd_stats() {
+    if [ "$1" = "reset" ]; then
+        read -rp "delete all vocabulary and stats? [y/N] " c
+        [[ "$c" =~ ^[yY]$ ]] && sqlite3 "$DB" "DELETE FROM vocabulary;" && echo "done." || echo "cancelled."
+        return
+    fi
+    local total eng_cnt tur_cnt today week latest
+    total=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
+    eng_cnt=$(sqlite3 "$DB" "SELECT COUNT(DISTINCT eng_word) FROM vocabulary;")
+    tur_cnt=$(sqlite3 "$DB" "SELECT COUNT(DISTINCT tur_word) FROM vocabulary;")
+    today=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary WHERE created_at >= date('now');")
+    week=$(sqlite3 "$DB"  "SELECT COUNT(*) FROM vocabulary WHERE created_at >= date('now','-7 days');")
+    latest=$(sqlite3 "$DB" "SELECT created_at FROM vocabulary ORDER BY created_at DESC LIMIT 1;")
+    echo "total words:      $total"
+    echo "unique english:   $eng_cnt"
+    echo "unique turkish:   $tur_cnt"
+    echo "added today:      $today"
+    echo "added last 7 days: $week"
+    [ -n "$latest" ] && echo "last added:       $latest"
+}
+
 cmd_quiz() {
-    local count
+    local count limit="" reverse=0
     count=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
     [ "$count" -eq 0 ] && { echo "no words yet." >&2; exit 1; }
 
-    local row eng tur
-    row=$(sqlite3 "$DB" "SELECT eng_word, tur_word FROM vocabulary ORDER BY RANDOM() LIMIT 1;")
-    eng="${row%%|*}"; tur="${row##*|}"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --count) shift; limit="$1"; shift ;;
+            --reverse) reverse=1; shift ;;
+            *) break ;;
+        esac
+    done
 
-    if (( RANDOM % 2 == 0 )); then
-        read -rp "$eng ? " _
-        echo "-> $tur"
-    else
-        read -rp "$tur ? " _
-        echo "-> $eng"
-    fi
+    local i=0 total="${limit:-999999}"
+    while [ "$i" -lt "$total" ]; do
+        local row eng tur
+        row=$(sqlite3 "$DB" "SELECT eng_word, tur_word FROM vocabulary ORDER BY RANDOM() LIMIT 1;")
+        [ -z "$row" ] && break
+        eng="${row%%|*}"; tur="${row##*|}"
+        eng="${eng//\'/\'\'}"; tur="${tur//\'/\'\'}"
+
+        local direction=$(( RANDOM % 2 ))
+        [ "$reverse" -eq 1 ] && direction=1
+
+        if [ "$direction" -eq 0 ]; then
+            local ans all
+            ans=$(sqlite3 "$DB" "SELECT tur_word FROM vocabulary WHERE eng_word='$eng' ORDER BY tur_word;")
+            all=$(echo "$ans" | paste -sd '/' -)
+            read -rp "${YELLOW}$eng${RESET} ? " reply
+            local found=0
+            while IFS= read -r a; do [ "$reply" = "$a" ] && { found=1; break; }; done <<< "$ans"
+            if [ "$found" = 1 ]; then
+                echo "${GREEN}✓   $eng -> $all${RESET}"
+            else
+                echo "${RED}✗   $eng -> $all${RESET}"
+            fi
+        else
+            local ans all
+            ans=$(sqlite3 "$DB" "SELECT eng_word FROM vocabulary WHERE tur_word='$tur' ORDER BY eng_word;")
+            all=$(echo "$ans" | paste -sd '/' -)
+            read -rp "${YELLOW}$tur${RESET} ? " reply
+            local found=0
+            while IFS= read -r a; do [ "$reply" = "$a" ] && { found=1; break; }; done <<< "$ans"
+            if [ "$found" = 1 ]; then
+                echo "${GREEN}✓   $tur -> $all${RESET}"
+            else
+                echo "${RED}✗   $tur -> $all${RESET}"
+            fi
+        fi
+        (( i++ ))
+    done
+}
+
+cmd_learn() {
+    local ids=() engs=() turs=()
+    while IFS='|' read -r id eng tur; do
+        ids+=("$id"); engs+=("$eng"); turs+=("$tur")
+    done < <(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary ORDER BY RANDOM();")
+    [ ${#ids[@]} -eq 0 ] && { echo "no words yet." >&2; exit 1; }
+
+    local n=${#ids[@]} wrong_idx=() correct=0 p1=0
+    for pass in 1 2; do
+        [ "$pass" -eq 2 ] && [ ${#wrong_idx[@]} -eq 0 ] && break
+        [ "$pass" -eq 2 ] && echo "${YELLOW}--- pass 2 (${#wrong_idx[@]} to retry) ---${RESET}"
+
+        local new_wrong=() idx=0
+        for i in "${!ids[@]}"; do
+            [ "$pass" -eq 2 ] && ! echo " ${wrong_idx[*]} " | grep -q " $i " && continue
+            local eng="${engs[$i]}" tur="${turs[$i]}"
+            eng="${eng//\'/\'\'}"; tur="${tur//\'/\'\'}"
+            (( idx++ ))
+            local total="$n"; [ "$pass" -eq 2 ] && total="${#wrong_idx[@]}"
+
+            if (( RANDOM % 2 == 0 )); then
+                printf "[%d/%d] ${YELLOW}%s${RESET} ? " "$idx" "$total" "$eng"
+                read -r reply
+                local ans all
+                ans=$(sqlite3 "$DB" "SELECT tur_word FROM vocabulary WHERE eng_word='$eng' ORDER BY tur_word;")
+                all=$(echo "$ans" | paste -sd '/' -)
+                local found=0
+                while IFS= read -r a; do [ "$reply" = "$a" ] && { found=1; break; }; done <<< "$ans"
+                if [ "$found" = 1 ]; then
+                    echo "  ${GREEN}✓   $eng -> $all${RESET}"; (( correct++ ))
+                    [ "$pass" -eq 1 ] && (( p1++ ))
+                else
+                    echo "  ${RED}✗   $eng -> $all${RESET}"
+                    new_wrong+=("$i")
+                fi
+            else
+                printf "[%d/%d] ${YELLOW}%s${RESET} ? " "$idx" "$total" "$tur"
+                read -r reply
+                local ans all
+                ans=$(sqlite3 "$DB" "SELECT eng_word FROM vocabulary WHERE tur_word='$tur' ORDER BY eng_word;")
+                all=$(echo "$ans" | paste -sd '/' -)
+                local found=0
+                while IFS= read -r a; do [ "$reply" = "$a" ] && { found=1; break; }; done <<< "$ans"
+                if [ "$found" = 1 ]; then
+                    echo "  ${GREEN}✓   $tur -> $all${RESET}"; (( correct++ ))
+                    [ "$pass" -eq 1 ] && (( p1++ ))
+                else
+                    echo "  ${RED}✗   $tur -> $all${RESET}"
+                    new_wrong+=("$i")
+                fi
+            fi
+        done
+        wrong_idx=("${new_wrong[@]}")
+    done
+    local p2=$((correct - p1))
+    echo "${BOLD}result: $correct/$n correct (pass1: $p1, pass2: $p2)${RESET}"
 }
 
 cmd_list() {
@@ -193,8 +377,8 @@ cmd_list() {
     [ "$count" -eq 0 ] && { echo "no words yet." >&2; exit 1; }
 
     sqlite3 -column -header "$DB" \
-        "SELECT id, eng_word AS 'en', tur_word AS 'tr' FROM vocabulary;"
-    echo "($count words)"
+        "SELECT id, eng_word AS 'en', tur_word AS 'tr', created_at AS 'date' FROM vocabulary;"
+    echo "${BOLD}($count words)${RESET}"
 }
 
 cmd_about() {
@@ -216,12 +400,18 @@ EOF
 
 usage() {
     cat <<EOF
-vocab add <word> [word2 ...]       auto-translate one or more
-vocab add <word> "meaning"         manual add
-vocab delete <id|word> [word2 ...] delete one or more
-vocab delete all                   clear everything
-vocab quiz                         test yourself
-vocab list                         show all
+vocab add <word> [word2 ...]          auto-translate one or more
+vocab add <word> "meaning"            manual add
+vocab translate <word>                quick translation (no save)
+vocab search <word>                   search all meanings
+vocab delete <id|word> [word2 ...]    delete one or more
+vocab delete all                      clear everything
+vocab stats [reset]                   show stats (reset to clear all)
+vocab quiz [--count N] [--reverse]    test yourself
+vocab learn                           learn mode (retry wrong)
+vocab list                            show all
+vocab export                          export as JSON
+vocab import <file.json>              import from JSON
 vocab about
 EOF
 }
@@ -229,10 +419,16 @@ EOF
 init_db
 
 case "$1" in
-    add)    shift; cmd_add    "$@" ;;
-    delete) shift; cmd_delete "$@" ;;
-    quiz)   cmd_quiz              ;;
-    list)   cmd_list              ;;
-    about)  cmd_about             ;;
-    *)      usage                 ;;
+    add)       shift; cmd_add       "$@" ;;
+    translate) shift; cmd_translate  "$@" ;;
+    search)    shift; cmd_search     "$@" ;;
+    delete)    shift; cmd_delete     "$@" ;;
+    stats)     shift; cmd_stats      "$@" ;;
+    quiz)      shift; cmd_quiz       "$@" ;;
+    learn)     cmd_learn                 ;;
+    list)      cmd_list                  ;;
+    export)    cmd_export                ;;
+    import)    shift; cmd_import     "$@" ;;
+    about)     cmd_about                 ;;
+    *)         usage                     ;;
 esac
