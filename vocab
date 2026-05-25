@@ -55,6 +55,18 @@ is_turkish() {
     echo "$1" | grep -qP '[çÇğĞıİöÖşŞüÜ]'
 }
 
+# text-to-speech using espeak-ng (default) or espeak
+speak() {
+    local word="$1" lang="$2"
+    if command -v espeak-ng &>/dev/null; then
+        espeak-ng -v "$lang" "$word" 2>/dev/null
+    elif command -v espeak &>/dev/null; then
+        espeak -v "$lang" "$word" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
 # add single word, called by cmd_add
 _add_one() {
     local word="$1" meaning="$2"
@@ -111,6 +123,14 @@ cmd_translate() {
     fi
 }
 
+cmd_speak() {
+    [ -z "$1" ] && { echo "usage: vocab speak <word>" >&2; exit 1; }
+    local word="$1"
+    local lang="en"; is_turkish "$word" && lang="tr"
+    speak "$word" "$lang" && return
+    echo "  install espeak-ng for voice support" >&2
+}
+
 cmd_search() {
     [ -z "$1" ] && { echo "usage: vocab search <word>" >&2; exit 1; }
     local term="$1"
@@ -119,7 +139,21 @@ cmd_search() {
     rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word, created_at FROM vocabulary
            WHERE eng_word LIKE '%$term%' OR tur_word LIKE '%$term%'
            ORDER BY eng_word, tur_word;")
-    [ -z "$rows" ] && { echo "  not found: '$1'" >&2; exit 1; }
+    if [ -z "$rows" ]; then
+        echo "  not found: '$1'" >&2
+        local prefix
+        prefix=$(echo "$1" | head -c 1)
+        [ -z "$prefix" ] && return 1
+        local suggest
+        suggest=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary
+                 WHERE eng_word LIKE '$prefix%' OR tur_word LIKE '$prefix%'
+                 ORDER BY eng_word, tur_word LIMIT 5;")
+        [ -n "$suggest" ] && echo "  did you mean?" && \
+        while IFS='|' read -r id e t; do
+            printf "    %-15s -> %s\n" "$e" "$t"
+        done <<< "$suggest"
+        return 1
+    fi
     printf "%-4s %-15s %-15s %s\n" "id" "en" "tr" "date"
     while IFS='|' read -r id eng tur date; do
         printf "%-4s %-15s %-15s %s\n" "$id" "$eng" "$tur" "$date"
@@ -403,6 +437,7 @@ usage() {
 vocab add <word> [word2 ...]          auto-translate one or more
 vocab add <word> "meaning"            manual add
 vocab translate <word>                quick translation (no save)
+vocab speak <word>                    text-to-speech pronunciation
 vocab search <word>                   search all meanings
 vocab delete <id|word> [word2 ...]    delete one or more
 vocab delete all                      clear everything
@@ -421,6 +456,7 @@ init_db
 case "$1" in
     add)       shift; cmd_add       "$@" ;;
     translate) shift; cmd_translate  "$@" ;;
+    speak)     shift; cmd_speak      "$@" ;;
     search)    shift; cmd_search     "$@" ;;
     delete)    shift; cmd_delete     "$@" ;;
     stats)     shift; cmd_stats      "$@" ;;
