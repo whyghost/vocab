@@ -27,26 +27,26 @@ init_db() {
 }
 
 translate() {
-    local word="$1" pair="$2"
-    python3 - "$word" "$pair" <<'EOF'
+    local word="$1" tgt="$2"
+    python3 - "$word" "$tgt" <<'EOF'
 import sys, urllib.request, urllib.parse, json
 
-q     = urllib.parse.quote(sys.argv[1])
-pair  = sys.argv[2]
-src, tgt = pair.split('|')
+q   = urllib.parse.quote(sys.argv[1])
+tgt = sys.argv[2]
 
 try:
-    url  = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={src}&tl={tgt}&dt=t&q={q}"
+    url  = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={tgt}&dt=t&q={q}"
     raw  = urllib.request.urlopen(url, timeout=8).read()
     data = json.loads(raw.decode("utf-8"))
     out  = data[0][0][0].strip()
+    src  = data[2]
 except:
     sys.exit(1)
 
 if not out or out.upper() == sys.argv[1].upper():
     sys.exit(1)
 
-print(out)
+print(f"{src}|{out}")
 EOF
 }
 
@@ -81,17 +81,32 @@ _add_one() {
 
     echo "looking up '$word'..."
 
-    local eng tur
+    local result translation turkish_word=false
     if is_turkish "$word"; then
-        eng=$(translate "$word" "tr|en") || { echo "  couldn't fetch '$word'" >&2; return 1; }
-        eng="${eng//\'/\'\'}"
-        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$eng', '$word');"
-        echo "$eng -> $word"
+        result=$(translate "$word" "en")
+        if [ -n "$result" ]; then
+            turkish_word=true
+        else
+            result=$(translate "$word" "tr")
+        fi
     else
-        tur=$(translate "$word" "en|tr") || { echo "  couldn't fetch '$word'" >&2; return 1; }
-        tur="${tur//\'/\'\'}"
-        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$word', '$tur');"
-        echo "$word -> $tur"
+        result=$(translate "$word" "tr")
+        if [ -z "$result" ]; then
+            result=$(translate "$word" "en")
+            turkish_word=true
+        fi
+    fi
+    [ -z "$result" ] && { echo "  couldn't fetch '$word'" >&2; return 1; }
+
+    translation="${result#*|}"
+    translation="${translation//\'/\'\'}"
+
+    if $turkish_word; then
+        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$translation', '$word');"
+        echo "$translation -> $word"
+    else
+        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$word', '$translation');"
+        echo "$word -> $translation"
     fi
 }
 
@@ -111,16 +126,10 @@ cmd_add() {
 
 cmd_translate() {
     [ -z "$1" ] && { echo "usage: vocab translate <word>" >&2; exit 1; }
-    local word="$1"
-    if is_turkish "$word"; then
-        local en
-        en=$(translate "$word" "tr|en") || { echo "  couldn't fetch '$word'" >&2; exit 1; }
-        echo "$en"
-    else
-        local tr
-        tr=$(translate "$word" "en|tr") || { echo "  couldn't fetch '$word'" >&2; exit 1; }
-        echo "$tr"
-    fi
+    local word="$1" result
+    result=$(translate "$word" "tr") || result=$(translate "$word" "en")
+    [ -z "$result" ] && { echo "  couldn't fetch '$word'" >&2; exit 1; }
+    echo "${result#*|}"
 }
 
 cmd_speak() {
