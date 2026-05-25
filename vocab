@@ -56,6 +56,15 @@ is_turkish() {
 }
 
 # text-to-speech using espeak-ng (default) or espeak
+# find smallest unused id (fills gaps)
+_next_id() {
+    sqlite3 "$DB" "SELECT MIN(fill) FROM (
+        SELECT 1 AS fill WHERE 1 NOT IN (SELECT id FROM vocabulary)
+        UNION ALL
+        SELECT id + 1 FROM vocabulary WHERE id + 1 NOT IN (SELECT id FROM vocabulary)
+    );"
+}
+
 speak() {
     local word="$1" lang="$2"
     if command -v espeak-ng &>/dev/null; then
@@ -70,11 +79,13 @@ speak() {
 # add single word, called by cmd_add
 _add_one() {
     local word="$1" meaning="$2"
+    local new_id
+    new_id=$(_next_id)
     word="${word//\'/\'\'}"
 
     if [ -n "$meaning" ]; then
         meaning="${meaning//\'/\'\'}"
-        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$word', '$meaning');"
+        sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$word', '$meaning');"
         echo "$word -> $meaning"
         return
     fi
@@ -102,10 +113,10 @@ _add_one() {
     translation="${translation//\'/\'\'}"
 
     if $turkish_word; then
-        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$translation', '$word');"
+        sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$translation', '$word');"
         echo "$translation -> $word"
     else
-        sqlite3 "$DB" "INSERT INTO vocabulary (eng_word, tur_word) VALUES ('$word', '$translation');"
+        sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$word', '$translation');"
         echo "$word -> $translation"
     fi
 }
