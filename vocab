@@ -55,7 +55,6 @@ is_turkish() {
     echo "$1" | grep -qP '[çÇğĞıİöÖşŞüÜ]'
 }
 
-# text-to-speech using espeak-ng (default) or espeak
 # find smallest unused id (fills gaps)
 _next_id() {
     sqlite3 "$DB" "SELECT MIN(fill) FROM (
@@ -65,8 +64,46 @@ _next_id() {
     );"
 }
 
+# text-to-speech using Google Translate TTS (primary) or espeak (fallback)
+_play_audio() {
+    local file="$1"
+    if command -v ffplay &>/dev/null; then
+        ffplay -nodisp -autoexit -loglevel quiet "$file" 2>/dev/null
+    elif command -v mpg123 &>/dev/null; then
+        mpg123 -q "$file" 2>/dev/null
+    elif command -v mpv &>/dev/null; then
+        mpv --no-video --quiet "$file" 2>/dev/null
+    elif command -v paplay &>/dev/null; then
+        paplay "$file" 2>/dev/null
+    elif command -v aplay &>/dev/null; then
+        aplay "$file" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
 speak() {
     local word="$1" lang="$2"
+    word="${word//\'/\\\'}"
+
+    if command -v curl &>/dev/null; then
+        local tmpfile
+        tmpfile=$(mktemp /tmp/vocab-tts-XXXXXX 2>/dev/null) || tmpfile="/tmp/vocab-tts-$$"
+        python3 -c "
+import sys, urllib.request, urllib.parse
+try:
+    url = 'https://translate.google.com/translate_tts?ie=UTF-8&tl=' + sys.argv[2] + '&q=' + urllib.parse.quote(sys.argv[1]) + '&client=tw-ob'
+    data = urllib.request.urlopen(url, timeout=8).read()
+    with open(sys.argv[3], 'wb') as f:
+        f.write(data)
+except:
+    sys.exit(1)
+" "$word" "$lang" "$tmpfile" && _play_audio "$tmpfile"
+        local ret=$?
+        rm -f "$tmpfile"
+        [ $ret -eq 0 ] && return 0
+    fi
+
     if command -v espeak-ng &>/dev/null; then
         espeak-ng -v "$lang" "$word" 2>/dev/null
     elif command -v espeak &>/dev/null; then
@@ -155,18 +192,22 @@ cmd_search() {
     [ -z "$1" ] && { echo "usage: vocab search <word>" >&2; exit 1; }
     local term="$1"
     term="${term//\'/\'\'}"
+    local sqlesc
+    sqlesc="${term//%/\\%}"; sqlesc="${sqlesc//_/\\_}"
     local rows
     rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word, created_at FROM vocabulary
-           WHERE eng_word LIKE '%$term%' OR tur_word LIKE '%$term%'
+           WHERE eng_word LIKE '%$sqlesc%' ESCAPE '\' OR tur_word LIKE '%$sqlesc%' ESCAPE '\'
            ORDER BY eng_word, tur_word;")
     if [ -z "$rows" ]; then
         echo "  not found: '$1'" >&2
         local prefix
         prefix=$(echo "$1" | head -c 1)
         [ -z "$prefix" ] && return 1
+        local psql
+        psql="${prefix//%/\\%}"; psql="${psql//_/\\_}"
         local suggest
         suggest=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary
-                 WHERE eng_word LIKE '$prefix%' OR tur_word LIKE '$prefix%'
+                 WHERE eng_word LIKE '$psql%' ESCAPE '\' OR tur_word LIKE '$psql%' ESCAPE '\'
                  ORDER BY eng_word, tur_word LIMIT 5;")
         [ -n "$suggest" ] && echo "  did you mean?" && \
         while IFS='|' read -r id e t; do
@@ -189,8 +230,10 @@ _del_one() {
     if [[ "$target" =~ ^[0-9]+$ ]]; then
         rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary WHERE id = $target;")
     else
+        local sqlesc
+        sqlesc="${target//%/\\%}"; sqlesc="${sqlesc//_/\\_}"
         rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary
-               WHERE eng_word LIKE '$target' OR tur_word LIKE '$target';")
+               WHERE eng_word LIKE '$sqlesc' ESCAPE '\' OR tur_word LIKE '$sqlesc' ESCAPE '\';")
     fi
 
     [ -z "$rows" ] && { echo "  not found: '$target'" >&2; return 1; }
@@ -240,8 +283,10 @@ cmd_delete() {
         if [[ "$target" =~ ^[0-9]+$ ]]; then
             rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary WHERE id = $target;")
         else
+            local sqlesc
+            sqlesc="${target//%/\\%}"; sqlesc="${sqlesc//_/\\_}"
             rows=$(sqlite3 "$DB" "SELECT id, eng_word, tur_word FROM vocabulary
-                   WHERE eng_word LIKE '$target' OR tur_word LIKE '$target';")
+                   WHERE eng_word LIKE '$sqlesc' ESCAPE '\' OR tur_word LIKE '$sqlesc' ESCAPE '\';")
         fi
         [ -z "$rows" ] && { echo "not found: '$orig'" >&2; exit 1; }
 
@@ -280,15 +325,22 @@ cmd_import() {
     [ ! -f "$file" ] && { echo "  file not found: $file" >&2; exit 1; }
     local before after
     before=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
-    python3 -c "
+
+    while IFS='|' read -r en tr; do
+        [ -z "$en" ] && continue
+        local new_id
+        new_id=$(_next_id)
+        sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$en', '$tr');"
+    done < <(python3 -c "
 import sys, json
-with open('$file') as f:
+with open(sys.argv[1]) as f:
     data = json.load(f)
 for entry in data:
     en = entry.get('en', entry.get('eng_word', entry.get('eng', ''))).replace(\"'\", \"''\")
     tr = entry.get('tr', entry.get('tur_word', entry.get('tur', ''))).replace(\"'\", \"''\")
-    print(f\"INSERT INTO vocabulary (eng_word, tur_word) VALUES ('{en}', '{tr}');\")
-" | sqlite3 "$DB"
+    print(en + '|' + tr)
+" "$file")
+
     after=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
     echo "  imported: $((after - before)) new words"
 }
@@ -314,6 +366,39 @@ cmd_stats() {
     [ -n "$latest" ] && echo "last added:       $latest"
 }
 
+# check if two strings are close enough (typo, different form)
+_close_enough() {
+    local a="$1" b="$2"
+    a="${a,,}"; b="${b,,}"
+    [ -z "$a" ] || [ -z "$b" ] && return 1
+    [ "$a" = "$b" ] && return 0
+    [[ "$a" == *"$b"* || "$b" == *"$a"* ]] && return 0
+    local dist
+    dist=$(awk -v a="$a" -v b="$b" 'BEGIN{
+        la=length(a); lb=length(b)
+        for(i=0;i<=lb;i++) d[i]=i
+        for(i=1;i<=la;i++){
+            prev=d[0]; d[0]=i
+            for(j=1;j<=lb;j++){
+                temp=d[j]
+                if(substr(a,i,1)==substr(b,j,1)) d[j]=prev
+                else{
+                    d[j]=prev+1
+                    if(temp+1<d[j]) d[j]=temp+1
+                    if(d[j-1]+1<d[j]) d[j]=d[j-1]+1
+                }
+                prev=temp
+            }
+        }
+        print d[lb]
+    }')
+    local len=${#a}; [ ${#b} -gt $len ] && len=${#b}
+    [ "$dist" -le 2 ] && return 0
+    [ "$dist" -le 4 -a "$len" -ge 7 ] && return 0
+    [ "$len" -ge 5 -a "$(( dist * 10 / len ))" -le 5 ] && return 0
+    return 1
+}
+
 cmd_quiz() {
     local count limit="" reverse=0
     count=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
@@ -327,15 +412,24 @@ cmd_quiz() {
         esac
     done
 
-    local i=0 total="${limit:-999999}"
+    local i=0 total="${limit:-999999}" retry_row="" retry_dir=""
     while [ "$i" -lt "$total" ]; do
         local row eng tur
-        row=$(sqlite3 "$DB" "SELECT eng_word, tur_word FROM vocabulary ORDER BY RANDOM() LIMIT 1;")
+        if [ -n "$retry_row" ]; then
+            row="$retry_row"; retry_row=""
+        else
+            row=$(sqlite3 "$DB" "SELECT eng_word, tur_word FROM vocabulary ORDER BY RANDOM() LIMIT 1;")
+        fi
         [ -z "$row" ] && break
         eng="${row%%|*}"; tur="${row##*|}"
         eng="${eng//\'/\'\'}"; tur="${tur//\'/\'\'}"
 
-        local direction=$(( RANDOM % 2 ))
+        local direction
+        if [ -n "$retry_dir" ]; then
+            direction="$retry_dir"; retry_dir=""
+        else
+            direction=$(( RANDOM % 2 ))
+        fi
         [ "$reverse" -eq 1 ] && direction=1
 
         if [ "$direction" -eq 0 ]; then
@@ -343,27 +437,50 @@ cmd_quiz() {
             ans=$(sqlite3 "$DB" "SELECT tur_word FROM vocabulary WHERE eng_word='$eng' ORDER BY tur_word;")
             all=$(echo "$ans" | paste -sd '/' -)
             read -rp "${YELLOW}$eng${RESET} ? " reply
-            local found=0
-            while IFS= read -r a; do [ "$reply" = "$a" ] && { found=1; break; }; done <<< "$ans"
+            local found=0 close=0 a
+            while IFS= read -r a; do
+                [ "$reply" = "$a" ] && { found=1; break; }
+                _close_enough "$reply" "$a" && close=1
+            done <<< "$ans"
+            if [ "$found" != 1 ]; then
+                local rl="${reply,,}" eg="${eng,,}"
+                [ "$rl" != "$eg" ] && _close_enough "$reply" "$eng" && close=1
+            fi
             if [ "$found" = 1 ]; then
                 echo "${GREEN}✓   $eng -> $all${RESET}"
+                (( i++ ))
+            elif [ "$close" = 1 ]; then
+                echo "${YELLOW}🟡   $eng -> $all${RESET}"
+                retry_row="$row"; retry_dir="$direction"
             else
                 echo "${RED}✗   $eng -> $all${RESET}"
+                (( i++ ))
             fi
         else
             local ans all
             ans=$(sqlite3 "$DB" "SELECT eng_word FROM vocabulary WHERE tur_word='$tur' ORDER BY eng_word;")
             all=$(echo "$ans" | paste -sd '/' -)
             read -rp "${YELLOW}$tur${RESET} ? " reply
-            local found=0
-            while IFS= read -r a; do [ "$reply" = "$a" ] && { found=1; break; }; done <<< "$ans"
+            local found=0 close=0 a
+            while IFS= read -r a; do
+                [ "$reply" = "$a" ] && { found=1; break; }
+                _close_enough "$reply" "$a" && close=1
+            done <<< "$ans"
+            if [ "$found" != 1 ]; then
+                local rl="${reply,,}" tg="${tur,,}"
+                [ "$rl" != "$tg" ] && _close_enough "$reply" "$tur" && close=1
+            fi
             if [ "$found" = 1 ]; then
                 echo "${GREEN}✓   $tur -> $all${RESET}"
+                (( i++ ))
+            elif [ "$close" = 1 ]; then
+                echo "${YELLOW}🟡   $tur -> $all${RESET}"
+                retry_row="$row"; retry_dir="$direction"
             else
                 echo "${RED}✗   $tur -> $all${RESET}"
+                (( i++ ))
             fi
         fi
-        (( i++ ))
     done
 }
 
@@ -393,11 +510,21 @@ cmd_learn() {
                 local ans all
                 ans=$(sqlite3 "$DB" "SELECT tur_word FROM vocabulary WHERE eng_word='$eng' ORDER BY tur_word;")
                 all=$(echo "$ans" | paste -sd '/' -)
-                local found=0
-                while IFS= read -r a; do [ "$reply" = "$a" ] && { found=1; break; }; done <<< "$ans"
+                local found=0 close=0 a
+                while IFS= read -r a; do
+                    [ "$reply" = "$a" ] && { found=1; break; }
+                    _close_enough "$reply" "$a" && close=1
+                done <<< "$ans"
+                if [ "$found" != 1 ]; then
+                    local rl="${reply,,}" eg="${eng,,}"
+                    [ "$rl" != "$eg" ] && _close_enough "$reply" "$eng" && close=1
+                fi
                 if [ "$found" = 1 ]; then
                     echo "  ${GREEN}✓   $eng -> $all${RESET}"; (( correct++ ))
                     [ "$pass" -eq 1 ] && (( p1++ ))
+                elif [ "$close" = 1 ]; then
+                    echo "  ${YELLOW}🟡   $eng -> $all${RESET}"
+                    new_wrong+=("$i")
                 else
                     echo "  ${RED}✗   $eng -> $all${RESET}"
                     new_wrong+=("$i")
@@ -408,11 +535,21 @@ cmd_learn() {
                 local ans all
                 ans=$(sqlite3 "$DB" "SELECT eng_word FROM vocabulary WHERE tur_word='$tur' ORDER BY eng_word;")
                 all=$(echo "$ans" | paste -sd '/' -)
-                local found=0
-                while IFS= read -r a; do [ "$reply" = "$a" ] && { found=1; break; }; done <<< "$ans"
+                local found=0 close=0 a
+                while IFS= read -r a; do
+                    [ "$reply" = "$a" ] && { found=1; break; }
+                    _close_enough "$reply" "$a" && close=1
+                done <<< "$ans"
+                if [ "$found" != 1 ]; then
+                    local rl="${reply,,}" tg="${tur,,}"
+                    [ "$rl" != "$tg" ] && _close_enough "$reply" "$tur" && close=1
+                fi
                 if [ "$found" = 1 ]; then
                     echo "  ${GREEN}✓   $tur -> $all${RESET}"; (( correct++ ))
                     [ "$pass" -eq 1 ] && (( p1++ ))
+                elif [ "$close" = 1 ]; then
+                    echo "  ${YELLOW}🟡   $tur -> $all${RESET}"
+                    new_wrong+=("$i")
                 else
                     echo "  ${RED}✗   $tur -> $all${RESET}"
                     new_wrong+=("$i")
