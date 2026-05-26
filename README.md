@@ -28,37 +28,45 @@
 
 > English/Turkish CLI vocabulary tool for language learners.
 
-## Uyarı!
-
-**Bu proje daha yapım aşamasındadır. Eksikliklerin farkındayım, en kısa süre içerisinde düzelteceğim. Anlayışınız için teşekkürler.**
-
 ##
 
-Linux terminali üzerinden İngilizce - Türkçe kelime tekrarı yapmak istediğinde, yeni kelimeler öğrenmek veya unuttuğun kelimeleri kaydederek tekrar etmeni sağlar.
+Linux terminali üzerinden İngilizce - Türkçe kelime tekrarı yapmak, yeni kelimeler öğrenmek veya unuttuğun kelimeleri kaydedip tekrar etmek için kullanılır.
 
-Çeviriler için MyMemory API kullanır ve kelimeleri yerel SQLite veritabanında saklar.
+Çeviriler için Google Translate kullanır, kelimeleri yerel SQLite veritabanında saklar. Hiçbir API anahtarı gerekmez.
 
 ## Özellikleri
-* **Hızlı Çeviri** : Tek komutla kelimeyi çevirir ve veritabanına ekler.
-* **Otomatik Dil Algılama:** Girdiğin kelimenin hangi dil olduğunu tanıtmana gerek kalmadan, kelimenin *Türkçe* veya *İngilizce* olduğunu anlat ve ona göre otomatikmen databasesine ekler.
-*  **Quiz Modu**: Quiz modu sayesinde rastgele kelime sorarak karşılığını ister. (Türkçe veya İngilizce karışık biçimde sorar.)
-* **Kolay Kullanım**: Herkesçe tarafından kolaylıkla kullanılabilir ve anlaşılabilir.
+* **Hızlı Çeviri & Kaydet**: `vocab add <word>` ile kelimeyi çevirir ve veritabanına ekler.
+* **Sadece Çeviri**: `vocab translate <word>` ile kaydetmeden sadece çevirir.
+* **Otomatik Dil Algılama**: Kelimenin Türkçe veya İngilizce olduğunu kendisi anlar, ona göre kaydeder.
+* **Quiz Modu**: `vocab quiz` ile rastgele kelime sorar, karşılığını ister. `--count` ve `--reverse` ile özelleştirilebilir.
+* **Learn Modu**: `vocab learn` ile iki paslı tekrar. Yanlış yapılanlar ikinci pasa kalır.
+* **Arama**: `vocab search <word>` ile tüm anlamlarını ve benzer kelimeleri gösterir.
+* **Konuşma**: `vocab speak <word>` ile Google TTS veya espeak ile telaffuzu dinletir.
+* **İstatistikler**: `vocab stats` ile toplam kelime, quiz/learn doğruluk oranlarını gösterir.
+* **Dışa/içe Aktar**: `vocab export` / `vocab import <file.json>` ile JSON yedekleme.
+* **ID Boşluk Doldurma**: Silinen ID'ler otomatik olarak yeni kelimelere verilir.
 
 ## Kurulum
 ### Arch Linux
-* Eğer _Arch Linux_ kullanıcısı iseniz [**AUR**](https://aur.archlinux.org/packages/vocab)'da pakete ulaşabilir ve kolaylıkla kurabilirsiniz.
+AUR üzerinden kurulum için:
 
-### Manuel
+    yay -S vocab
+
+veya
+
+    paru -S vocab
+
+### Manuel (Debian, Ubuntu vb.)
 #### Gereklilikler
 
-    git, python3, sqlite3
+    git, curl, python3, sqlite3
 
 #### 1-) Repoyu klonla ve klasöre gir
 
     git clone https://github.com/whyghost/vocab
     cd vocab
 
-#### 2-) Çalışma izni ve yetkilendir
+#### 2-) Çalışma izni ver
 
     chmod +x vocab
 
@@ -76,4 +84,8 @@ Linux terminali üzerinden İngilizce - Türkçe kelime tekrarı yapmak istediğ
     cp vocab /usr/local/bin/vocab
     exit
 
+##### Ses için isteğe bağlı:
 
+    sudo apt install ffmpeg      # Google TTS için (ffplay)
+    # veya
+    sudo apt install espeak-ng   # yedek TTS
