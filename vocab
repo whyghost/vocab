@@ -24,6 +24,13 @@ init_db() {
     );"
     # add created_at column to old databases (if missing)
     sqlite3 "$DB" "ALTER TABLE vocabulary ADD COLUMN created_at TEXT DEFAULT (datetime('now','localtime'));" 2>/dev/null || true
+    sqlite3 "$DB" "CREATE TABLE IF NOT EXISTS stats (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        mode    TEXT NOT NULL,
+        correct INTEGER NOT NULL,
+        total   INTEGER NOT NULL,
+        date    TEXT DEFAULT (datetime('now','localtime'))
+    );"
 }
 
 translate() {
@@ -347,11 +354,11 @@ for entry in data:
 
 cmd_stats() {
     if [ "$1" = "reset" ]; then
-        read -rp "delete all vocabulary and stats? [y/N] " c
-        [[ "$c" =~ ^[yY]$ ]] && sqlite3 "$DB" "DELETE FROM vocabulary;" && echo "done." || echo "cancelled."
+        read -rp "delete all quiz/learn stats? vocabulary will NOT be affected. [y/N] " c
+        [[ "$c" =~ ^[yY]$ ]] && sqlite3 "$DB" "DELETE FROM stats;" && echo "stats reset done." || echo "cancelled."
         return
     fi
-    local total eng_cnt tur_cnt today week latest
+    local total eng_cnt tur_cnt today week latest qc qt qp lc lt lp
     total=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
     eng_cnt=$(sqlite3 "$DB" "SELECT COUNT(DISTINCT eng_word) FROM vocabulary;")
     tur_cnt=$(sqlite3 "$DB" "SELECT COUNT(DISTINCT tur_word) FROM vocabulary;")
@@ -364,6 +371,14 @@ cmd_stats() {
     echo "added today:      $today"
     echo "added last 7 days: $week"
     [ -n "$latest" ] && echo "last added:       $latest"
+
+    qc=$(sqlite3 "$DB" "SELECT COALESCE(SUM(correct),0) FROM stats WHERE mode='quiz';")
+    qt=$(sqlite3 "$DB" "SELECT COALESCE(SUM(total),0) FROM stats WHERE mode='quiz';")
+    echo "quiz:             $qc/$qt correct ($([ "$qt" -gt 0 ] && echo "$(( qc * 100 / qt ))%" || echo "-"))"
+
+    lc=$(sqlite3 "$DB" "SELECT COALESCE(SUM(correct),0) FROM stats WHERE mode='learn';")
+    lt=$(sqlite3 "$DB" "SELECT COALESCE(SUM(total),0) FROM stats WHERE mode='learn';")
+    echo "learn:            $lc/$lt correct ($([ "$lt" -gt 0 ] && echo "$(( lc * 100 / lt ))%" || echo "-"))"
 }
 
 # check if two strings are close enough (typo, different form)
@@ -412,7 +427,7 @@ cmd_quiz() {
         esac
     done
 
-    local i=0 total="${limit:-999999}" retry_row="" retry_dir=""
+    local i=0 correct=0 total="${limit:-999999}" retry_row="" retry_dir=""
     while [ "$i" -lt "$total" ]; do
         local row eng tur
         if [ -n "$retry_row" ]; then
@@ -448,6 +463,7 @@ cmd_quiz() {
             fi
             if [ "$found" = 1 ]; then
                 echo "${GREEN}✓   $eng -> $all${RESET}"
+                (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
                 echo "${YELLOW}🟡   $eng -> $all${RESET}"
@@ -472,6 +488,7 @@ cmd_quiz() {
             fi
             if [ "$found" = 1 ]; then
                 echo "${GREEN}✓   $tur -> $all${RESET}"
+                (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
                 echo "${YELLOW}🟡   $tur -> $all${RESET}"
@@ -482,6 +499,7 @@ cmd_quiz() {
             fi
         fi
     done
+    [ "$i" -gt 0 ] && sqlite3 "$DB" "INSERT INTO stats (mode, correct, total) VALUES ('quiz', $correct, $i);"
 }
 
 cmd_learn() {
@@ -560,6 +578,7 @@ cmd_learn() {
     done
     local p2=$((correct - p1))
     echo "${BOLD}result: $correct/$n correct (pass1: $p1, pass2: $p2)${RESET}"
+    sqlite3 "$DB" "INSERT INTO stats (mode, correct, total) VALUES ('learn', $correct, $n);"
 }
 
 cmd_list() {
