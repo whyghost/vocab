@@ -28,8 +28,6 @@
 
 > English/Turkish CLI vocabulary tool for language learners.
 
-##
-
 Linux terminali üzerinden İngilizce - Türkçe kelime tekrarı yapmak, yeni kelimeler öğrenmek veya unuttuğun kelimeleri kaydedip tekrar etmek için kullanılır.
 
 Çeviriler için Google Translate kullanır, kelimeleri yerel SQLite veritabanında saklar. Hiçbir API anahtarı gerekmez.
@@ -39,7 +37,7 @@ Linux terminali üzerinden İngilizce - Türkçe kelime tekrarı yapmak, yeni ke
 * **Sadece Çeviri**: `vocab translate <word>` ile kaydetmeden sadece çevirir.
 * **Otomatik Dil Algılama**: Kelimenin Türkçe veya İngilizce olduğunu kendisi anlar, ona göre kaydeder.
 * **Quiz Modu**: `vocab quiz` ile rastgele kelime sorar, karşılığını ister. `--count` ve `--reverse` ile özelleştirilebilir.
-* **Learn Modu**: `vocab learn` ile iki paslı tekrar. Yanlış yapılanlar ikinci pasa kalır.
+* **Learn Modu**: `vocab learn` ile iki aşamalı tekrar. Yanlış yapılanlar ikinci pasa kalır.
 * **Arama**: `vocab search <word>` ile tüm anlamlarını ve benzer kelimeleri gösterir.
 * **Konuşma**: `vocab speak <word>` ile Google TTS veya espeak ile telaffuzu dinletir.
 * **İstatistikler**: `vocab stats` ile toplam kelime, quiz/learn doğruluk oranlarını gösterir.
@@ -59,12 +57,11 @@ veya
 ### Manuel (Debian, Ubuntu vb.)
 #### Gereklilikler
 
-    git, curl, python3, sqlite3
+    curl, python3, sqlite3
 
-#### 1-) Repoyu klonla ve klasöre gir
+#### 1-) Scripti indir
 
-    git clone https://github.com/whyghost/vocab
-    cd vocab
+    curl -LO https://raw.githubusercontent.com/whyghost/vocab/main/vocab
 
 #### 2-) Çalışma izni ver
 
@@ -74,11 +71,9 @@ veya
 ##### Sudo kullanıyorsan:
     sudo cp vocab /usr/local/bin/vocab
 ##### Opendoas kullanıyorsan:
-
     doas cp vocab /usr/local/bin/vocab
 
 ##### Hiçbiri yoksa:
-
     su -
     [Root şifreni isteyecek]
     cp vocab /usr/local/bin/vocab
