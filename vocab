@@ -136,32 +136,95 @@ _add_one() {
 
     echo "looking up '$word'..."
 
-    local result translation turkish_word=false
-    if is_turkish "$word"; then
-        result=$(translate "$word" "en")
-        if [ -n "$result" ]; then
-            turkish_word=true
-        else
-            result=$(translate "$word" "tr")
-        fi
-    else
-        result=$(translate "$word" "tr")
-        if [ -z "$result" ]; then
-            result=$(translate "$word" "en")
-            turkish_word=true
-        fi
-    fi
-    [ -z "$result" ] && { echo "  couldn't fetch '$word'" >&2; return 1; }
+    local output primary src translation alts turkish_word=false
+    local tgt1="tr" tgt2="en"
+    is_turkish "$word" && tgt1="en" tgt2="tr"
 
-    translation="${result#*|}"
+    output=$(python3 - "$word" "$tgt1" "$tgt2" <<'PYEOF' 2>/dev/null
+import sys, urllib.request, urllib.parse, json
+word = sys.argv[1]
+tgt1, tgt2 = sys.argv[2], sys.argv[3]
+q = urllib.parse.quote(word)
+for tgt in (tgt1, tgt2):
+    try:
+        url  = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={tgt}&dt=t&dt=bd&q={q}"
+        raw  = urllib.request.urlopen(url, timeout=8).read()
+        data = json.loads(raw.decode("utf-8"))
+        out  = data[0][0][0].strip()
+        src  = data[2]
+    except:
+        continue
+    if out and out.upper() != word.upper():
+        print(f"{src}|{out}")
+        if len(data) > 1 and data[1]:
+            seen = set()
+            for entry in data[1]:
+                for alt in entry[1]:
+                    a = alt.strip()
+                    if a and a != out and a not in seen:
+                        seen.add(a)
+                        print(f"ALT|{a}")
+        sys.exit(0)
+sys.exit(1)
+PYEOF
+)
+    [ -z "$output" ] && { echo "  couldn't fetch '$word'" >&2; return 1; }
+
+    primary=$(echo "$output" | head -1)
+    alts=$(echo "$output" | tail -n +2 | sed -n 's/^ALT|//p')
+    src="${primary%%|*}"
+    translation="${primary#*|}"
     translation="${translation//\'/\'\'}"
+    is_turkish "$word" && turkish_word=true
 
-    if $turkish_word; then
-        sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$translation', '$word');"
-        echo "$translation -> $word"
+    if [ -n "$alts" ]; then
+        local items=("$translation")
+        while IFS= read -r alt; do
+            [ -n "$alt" ] && items+=("$alt")
+        done <<< "$alts"
+
+        echo "  multiple meanings found:"
+        for i in "${!items[@]}"; do
+            echo "    $((i+1))) ${items[$i]}"
+        done
+        echo "    a) add all"
+        read -rp "  choose (e.g. 1,3,5 or Enter for primary): " choice
+
+        local selected_indices=()
+        if [ -z "$choice" ]; then
+            selected_indices=(0)
+        elif [ "$choice" = "a" ]; then
+            for i in "${!items[@]}"; do selected_indices+=("$i"); done
+        else
+            local nums
+            nums=$(echo "$choice" | tr ',' ' ' | tr -s ' ')
+            for n in $nums; do
+                local idx=$((n - 1))
+                [ "$idx" -ge 0 ] 2>/dev/null && [ "$idx" -lt "${#items[@]}" ] 2>/dev/null && selected_indices+=("$idx")
+            done
+            [ ${#selected_indices[@]} -eq 0 ] && selected_indices=(0)
+        fi
+
+        for idx in "${selected_indices[@]}"; do
+            local item="${items[$idx]}"
+            item="${item//\'/\'\'}"
+            new_id=$(_next_id)
+            if $turkish_word; then
+                sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$item', '$word');"
+                echo "  $item -> $word"
+            else
+                sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$word', '$item');"
+                echo "  $word -> $item"
+            fi
+        done
     else
-        sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$word', '$translation');"
-        echo "$word -> $translation"
+        if $turkish_word; then
+            sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$translation', '$word');"
+            echo "$translation -> $word"
+        else
+            sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$word', '$translation');"
+            echo "$word -> $translation"
+        fi
     fi
 }
 
