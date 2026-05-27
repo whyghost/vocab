@@ -75,6 +75,7 @@ _next_id() {
 
 _spell_check() {
     local word="$1" corrected
+    [[ "$word" == *" "* ]] && return
     corrected=$(python3 - "$word" <<'PYEOF' 2>/dev/null
 import sys, urllib.request, urllib.parse, json
 word = sys.argv[1]
