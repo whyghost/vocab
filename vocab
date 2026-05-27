@@ -634,15 +634,18 @@ cmd_quiz() {
         esac
     done
 
-    local i=0 correct=0 total="${limit:-999999}" retry_row="" retry_dir=""
+    local i=0 correct=0 total="${limit:-999999}" retry_row="" retry_dir="" prev_row=""
     trap 'sqlite3 "$DB" "INSERT INTO stats (mode, correct, total) VALUES ('"'"'quiz'"'"', $correct, $i);" 2>/dev/null; exit' INT
     while [ "$i" -lt "$total" ]; do
+        clear
         local row eng tur
         if [ -n "$retry_row" ]; then
             row="$retry_row"; retry_row=""
         else
             row=$(sqlite3 "$DB" "SELECT eng_word, tur_word FROM vocabulary ORDER BY RANDOM() LIMIT 1;")
+            [ "$count" -gt 1 -a -n "$prev_row" -a "$row" = "$prev_row" ] && continue
         fi
+        prev_row="$row"
         [ -z "$row" ] && break
         eng="${row%%|*}"; tur="${row##*|}"
         eng="${eng//\'/\'\'}"; tur="${tur//\'/\'\'}"
