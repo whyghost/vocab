@@ -31,6 +31,8 @@ init_db() {
         total   INTEGER NOT NULL,
         date    TEXT DEFAULT (datetime('now','localtime'))
     );"
+    # remove exact duplicate (eng_word, tur_word) pairs silently
+    sqlite3 "$DB" "DELETE FROM vocabulary WHERE id NOT IN (SELECT MIN(id) FROM vocabulary GROUP BY eng_word, tur_word);"
 }
 
 translate() {
@@ -69,6 +71,34 @@ _next_id() {
         UNION ALL
         SELECT id + 1 FROM vocabulary WHERE id + 1 NOT IN (SELECT id FROM vocabulary)
     );"
+}
+
+_spell_check() {
+    local word="$1" corrected
+    corrected=$(python3 - "$word" <<'PYEOF' 2>/dev/null
+import sys, urllib.request, urllib.parse, json
+word = sys.argv[1]
+src, mid = ("tr", "en") if any(c in "çÇğĞıİöÖşŞüÜ" for c in word) else ("en", "tr")
+q = urllib.parse.quote(word)
+try:
+    url  = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={src}&tl={mid}&dt=t&q={q}"
+    raw  = urllib.request.urlopen(url, timeout=8).read()
+    data = json.loads(raw.decode("utf-8"))
+    out  = data[0][0][0].strip()
+    if not out or out.upper() == word.upper():
+        sys.exit(0)
+    q2 = urllib.parse.quote(out)
+    url2 = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={mid}&tl={src}&dt=t&q={q2}"
+    raw2 = urllib.request.urlopen(url2, timeout=8).read()
+    data2 = json.loads(raw2.decode("utf-8"))
+    back = data2[0][0][0].strip()
+    if back and back.upper() != word.upper():
+        print(back)
+except:
+    sys.exit(0)
+PYEOF
+)
+    [ -n "$corrected" ] && echo "$corrected"
 }
 
 # text-to-speech using Google Translate TTS (primary) or espeak (fallback)
@@ -123,18 +153,32 @@ except:
 # add single word, called by cmd_add
 _add_one() {
     local word="$1" meaning="$2"
-    local new_id
-    new_id=$(_next_id)
     word="${word//\'/\'\'}"
 
     if [ -n "$meaning" ]; then
         meaning="${meaning//\'/\'\'}"
+        if sqlite3 "$DB" "SELECT 1 FROM vocabulary WHERE LOWER(eng_word)=LOWER('$word') AND LOWER(tur_word)=LOWER('$meaning');" | grep -q 1; then
+            read -rp "  already exists: $word -> $meaning. skip? [Y/n] " c
+            [[ "$c" =~ ^[nN] ]] || return
+        fi
+        local new_id
+        new_id=$(_next_id)
         sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$word', '$meaning');"
         echo "$word -> $meaning"
         return
     fi
 
     echo "looking up '$word'..."
+
+    local corrected
+    corrected=$(_spell_check "$word")
+    if [ -n "$corrected" ]; then
+        read -rp "  did you mean '${corrected}'? [Y/n] " c
+        if [[ ! "$c" =~ ^[nN] ]]; then
+            word="$corrected"
+            echo "  using '$word'"
+        fi
+    fi
 
     local output primary src translation alts turkish_word=false
     local tgt1="tr" tgt2="en"
@@ -177,12 +221,12 @@ PYEOF
     translation="${translation//\'/\'\'}"
     is_turkish "$word" && turkish_word=true
 
-    if [ -n "$alts" ]; then
-        local items=("$translation")
-        while IFS= read -r alt; do
-            [ -n "$alt" ] && items+=("$alt")
-        done <<< "$alts"
+    local items=("$translation")
+    while IFS= read -r alt; do
+        [ -n "$alt" ] && items+=("$alt")
+    done <<< "$alts"
 
+    if [ -n "$alts" ]; then
         echo "  multiple meanings found:"
         for i in "${!items[@]}"; do
             echo "    $((i+1))) ${items[$i]}"
@@ -208,16 +252,35 @@ PYEOF
         for idx in "${selected_indices[@]}"; do
             local item="${items[$idx]}"
             item="${item//\'/\'\'}"
-            new_id=$(_next_id)
+            local eng tur
             if $turkish_word; then
-                sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$item', '$word');"
-                echo "  $item -> $word"
+                eng="$item"; tur="$word"
             else
-                sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$word', '$item');"
-                echo "  $word -> $item"
+                eng="$word"; tur="$item"
             fi
+            if sqlite3 "$DB" "SELECT 1 FROM vocabulary WHERE LOWER(eng_word)=LOWER('$eng') AND LOWER(tur_word)=LOWER('$tur');" | grep -q 1; then
+                read -rp "  already exists: $eng -> $tur. skip? [Y/n] " c
+                [[ "$c" =~ ^[nN] ]] || continue
+            fi
+            local new_id
+            new_id=$(_next_id)
+            sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$eng', '$tur');"
+            echo "  $eng -> $tur"
         done
     else
+        if $turkish_word; then
+            if sqlite3 "$DB" "SELECT 1 FROM vocabulary WHERE LOWER(eng_word)=LOWER('$translation') AND LOWER(tur_word)=LOWER('$word');" | grep -q 1; then
+                read -rp "  already exists: $translation -> $word. skip? [Y/n] " c
+                [[ "$c" =~ ^[nN] ]] || return
+            fi
+        else
+            if sqlite3 "$DB" "SELECT 1 FROM vocabulary WHERE LOWER(eng_word)=LOWER('$word') AND LOWER(tur_word)=LOWER('$translation');" | grep -q 1; then
+                read -rp "  already exists: $word -> $translation. skip? [Y/n] " c
+                [[ "$c" =~ ^[nN] ]] || return
+            fi
+        fi
+        local new_id
+        new_id=$(_next_id)
         if $turkish_word; then
             sqlite3 "$DB" "INSERT INTO vocabulary (id, eng_word, tur_word) VALUES ($new_id, '$translation', '$word');"
             echo "$translation -> $word"
