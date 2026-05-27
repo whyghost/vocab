@@ -310,25 +310,43 @@ _del_one() {
 
     if [ "$(echo "$rows" | wc -l)" -gt 1 ]; then
         echo "multiple matches for '$target':"
-        local i=1
+        local i=1 ids=() engs=() turs=()
         while IFS='|' read -r id eng tur; do
             echo "  $i) $eng -> $tur  [id:$id]"
+            ids[$i]="$id"; engs[$i]="$eng"; turs[$i]="$tur"
             (( i++ ))
         done <<< "$rows"
+        local total=$((i - 1))
+        echo "  a) delete all"
         echo "  0) skip"
         read -rp "> " choice
-        if [[ "$choice" == "0" ]] || ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -ge "$i" ]; then
+        if [ -z "$choice" ] || [ "$choice" = "0" ]; then
             echo "  skipped."; return
         fi
-        rows=$(echo "$rows" | sed -n "${choice}p")
+        local indices=()
+        if [ "$choice" = "a" ]; then
+            for j in $(seq 1 $total); do indices+=("$j"); done
+        else
+            local nums
+            nums=$(echo "$choice" | tr ',' ' ' | tr -s ' ')
+            for n in $nums; do
+                if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "$total" ]; then
+                    indices+=("$n")
+                fi
+            done
+            [ ${#indices[@]} -eq 0 ] && { echo "  skipped."; return; }
+        fi
+        for idx in "${indices[@]}"; do
+            sqlite3 "$DB" "DELETE FROM vocabulary WHERE id = ${ids[$idx]};"
+            echo "  deleted: ${engs[$idx]} -> ${turs[$idx]}"
+        done
+    else
+        local row="$rows" id eng tur
+        id="${row%%|*}"; row="${row#*|}"
+        eng="${row%%|*}"; tur="${row##*|}"
+        sqlite3 "$DB" "DELETE FROM vocabulary WHERE id = $id;"
+        echo "deleted: $eng -> $tur"
     fi
-
-    local row="$rows" id eng tur
-    id="${row%%|*}"; row="${row#*|}"
-    eng="${row%%|*}"; tur="${row##*|}"
-
-    sqlite3 "$DB" "DELETE FROM vocabulary WHERE id = $id;"
-    echo "deleted: $eng -> $tur"
 }
 
 cmd_delete() {
@@ -362,25 +380,43 @@ cmd_delete() {
 
         if [ "$(echo "$rows" | wc -l)" -gt 1 ]; then
             echo "multiple matches:"
-            local i=1
+            local i=1 ids2=() engs2=() turs2=()
             while IFS='|' read -r id eng tur; do
                 echo "  $i) $eng -> $tur  [id:$id]"
+                ids2[$i]="$id"; engs2[$i]="$eng"; turs2[$i]="$tur"
                 (( i++ ))
             done <<< "$rows"
+            local total=$((i - 1))
+            echo "  a) delete all"
             echo "  0) cancel"
             read -rp "> " choice
-            if [[ "$choice" == "0" ]] || ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -ge "$i" ]; then
+            if [ -z "$choice" ] || [ "$choice" = "0" ]; then
                 echo "cancelled."; return
             fi
-            rows=$(echo "$rows" | sed -n "${choice}p")
+            local indices=()
+            if [ "$choice" = "a" ]; then
+                for j in $(seq 1 $total); do indices+=("$j"); done
+            else
+                local nums
+                nums=$(echo "$choice" | tr ',' ' ' | tr -s ' ')
+                for n in $nums; do
+                    if [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 1 ] && [ "$n" -le "$total" ]; then
+                        indices+=("$n")
+                    fi
+                done
+                [ ${#indices[@]} -eq 0 ] && { echo "cancelled."; return; }
+            fi
+            for idx in "${indices[@]}"; do
+                sqlite3 "$DB" "DELETE FROM vocabulary WHERE id = ${ids2[$idx]};"
+                echo "  deleted: ${engs2[$idx]} -> ${turs2[$idx]}"
+            done
+        else
+            local row="$rows" id eng tur
+            id="${row%%|*}"; row="${row#*|}"
+            eng="${row%%|*}"; tur="${row##*|}"
+            read -rp "delete '$eng -> $tur'? [y/N] " c
+            [[ "$c" =~ ^[yY]$ ]] && sqlite3 "$DB" "DELETE FROM vocabulary WHERE id = $id;" && echo "deleted." || echo "cancelled."
         fi
-
-        local row="$rows" id eng tur
-        id="${row%%|*}"; row="${row#*|}"
-        eng="${row%%|*}"; tur="${row##*|}"
-
-        read -rp "delete '$eng -> $tur'? [y/N] " c
-        [[ "$c" =~ ^[yY]$ ]] && sqlite3 "$DB" "DELETE FROM vocabulary WHERE id = $id;" && echo "deleted." || echo "cancelled."
     fi
 }
 
