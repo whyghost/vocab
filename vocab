@@ -177,6 +177,9 @@ _add_one() {
         if [[ ! "$c" =~ ^[nN] ]]; then
             word="$corrected"
             echo "  using '$word'"
+        else
+            read -rp "  add '${word}' anyway? [y/N] " c
+            [[ "$c" =~ ^[yY] ]] || return
         fi
     fi
 
