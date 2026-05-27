@@ -635,6 +635,7 @@ cmd_quiz() {
     done
 
     local i=0 correct=0 total="${limit:-999999}" retry_row="" retry_dir=""
+    trap 'sqlite3 "$DB" "INSERT INTO stats (mode, correct, total) VALUES ('"'"'quiz'"'"', $correct, $i);" 2>/dev/null; exit' INT
     while [ "$i" -lt "$total" ]; do
         local row eng tur
         if [ -n "$retry_row" ]; then
