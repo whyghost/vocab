@@ -244,10 +244,51 @@ cmd_add() {
 
 cmd_translate() {
     [ -z "$1" ] && { echo "usage: vocab translate <word>" >&2; exit 1; }
-    local word="$1" result
-    result=$(translate "$word" "tr") || result=$(translate "$word" "en")
-    [ -z "$result" ] && { echo "  couldn't fetch '$word'" >&2; exit 1; }
-    echo "${result#*|}"
+    local word="$1" output
+    local tgt1="tr" tgt2="en"
+    is_turkish "$word" && tgt1="en" tgt2="tr"
+
+    output=$(python3 - "$word" "$tgt1" "$tgt2" <<'PYEOF' 2>/dev/null
+import sys, urllib.request, urllib.parse, json
+word = sys.argv[1]
+tgt1, tgt2 = sys.argv[2], sys.argv[3]
+q = urllib.parse.quote(word)
+for tgt in (tgt1, tgt2):
+    try:
+        url  = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={tgt}&dt=t&dt=bd&q={q}"
+        raw  = urllib.request.urlopen(url, timeout=8).read()
+        data = json.loads(raw.decode("utf-8"))
+        out  = data[0][0][0].strip()
+        src  = data[2]
+    except:
+        continue
+    if out and out.upper() != word.upper():
+        print(f"{src}|{out}")
+        if len(data) > 1 and data[1]:
+            seen = set()
+            for entry in data[1]:
+                for alt in entry[1]:
+                    a = alt.strip()
+                    if a and a != out and a not in seen:
+                        seen.add(a)
+                        print(f"ALT|{a}")
+        sys.exit(0)
+sys.exit(1)
+PYEOF
+)
+    [ -z "$output" ] && { echo "  couldn't fetch '$word'" >&2; exit 1; }
+
+    local primary alts
+    primary=$(echo "$output" | head -1)
+    alts=$(echo "$output" | tail -n +2 | sed -n 's/^ALT|//p')
+
+    echo "${primary#*|}"
+    if [ -n "$alts" ]; then
+        echo "alternatives:"
+        while IFS= read -r alt; do
+            [ -n "$alt" ] && echo "  - $alt"
+        done <<< "$alts"
+    fi
 }
 
 cmd_speak() {
