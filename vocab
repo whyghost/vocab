@@ -634,10 +634,11 @@ cmd_quiz() {
         esac
     done
 
-    local i=0 correct=0 total="${limit:-999999}" retry_row="" retry_dir="" prev_row=""
+    local i=0 correct=0 total="${limit:-999999}" retry_row="" retry_dir="" prev_row="" last_msg=""
     trap 'sqlite3 "$DB" "INSERT INTO stats (mode, correct, total) VALUES ('"'"'quiz'"'"', $correct, $i);" 2>/dev/null; exit' INT
     while [ "$i" -lt "$total" ]; do
         clear
+        [ -n "$last_msg" ] && echo "$last_msg" && echo "────────────────────────"
         local row eng tur
         if [ -n "$retry_row" ]; then
             row="$retry_row"; retry_row=""
@@ -673,14 +674,17 @@ cmd_quiz() {
                 [ "$rl" != "$eg" ] && _close_enough "$reply" "$eng" && close=1
             fi
             if [ "$found" = 1 ]; then
-                echo "${GREEN}✓   $eng -> $all${RESET}"
+                last_msg="${GREEN}✓   $eng -> $all${RESET}"
+                echo "$last_msg"
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
-                echo "${YELLOW}🟡   $eng -> $all${RESET}"
+                last_msg="${YELLOW}🟡   $eng -> $all${RESET}"
+                echo "$last_msg"
                 retry_row="$row"; retry_dir="$direction"
             else
-                echo "${RED}✗   $eng -> $all${RESET}"
+                last_msg="${RED}✗   $eng -> $all${RESET}"
+                echo "$last_msg"
                 (( i++ ))
             fi
         else
@@ -698,14 +702,17 @@ cmd_quiz() {
                 [ "$rl" != "$tg" ] && _close_enough "$reply" "$tur" && close=1
             fi
             if [ "$found" = 1 ]; then
-                echo "${GREEN}✓   $tur -> $all${RESET}"
+                last_msg="${GREEN}✓   $tur -> $all${RESET}"
+                echo "$last_msg"
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
-                echo "${YELLOW}🟡   $tur -> $all${RESET}"
+                last_msg="${YELLOW}🟡   $tur -> $all${RESET}"
+                echo "$last_msg"
                 retry_row="$row"; retry_dir="$direction"
             else
-                echo "${RED}✗   $tur -> $all${RESET}"
+                last_msg="${RED}✗   $tur -> $all${RESET}"
+                echo "$last_msg"
                 (( i++ ))
             fi
         fi
