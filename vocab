@@ -623,6 +623,22 @@ _close_enough() {
     return 1
 }
 
+_quake_sound() {
+    local streak="$1" phrase
+    if [ "$streak" -eq 0 ]; then
+        phrase="Humiliation"
+    elif [ "$streak" -ge 5 ]; then
+        phrase="Godlike"
+    elif [ "$streak" -ge 4 ]; then
+        phrase="Impressive"
+    elif [ "$streak" -ge 3 ]; then
+        phrase="Excellent"
+    else
+        phrase="Double Kill"
+    fi
+    speak "$phrase" "en" &>/dev/null &
+}
+
 cmd_quiz() {
     local count limit="" reverse=0 audio=0
     count=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
@@ -634,11 +650,12 @@ cmd_quiz() {
             --reverse) reverse=1; shift ;;
             --audio) audio=1; shift ;;
             --audio-both) audio=2; shift ;;
+            --quake) quake=1; shift ;;
             *) break ;;
         esac
     done
 
-    local i=0 correct=0 total="${limit:-999999}" retry_row="" retry_dir="" prev_row="" last_msg=""
+    local i=0 correct=0 total="${limit:-999999}" retry_row="" retry_dir="" prev_row="" last_msg="" streak=0
     trap 'sqlite3 "$DB" "INSERT INTO stats (mode, correct, total) VALUES ('"'"'quiz'"'"', $correct, $i);" 2>/dev/null; exit' INT
     while [ "$i" -lt "$total" ]; do
         clear
@@ -682,6 +699,8 @@ cmd_quiz() {
                 echo "$last_msg"
                 [ "$audio" -ge 1 ] && speak "$eng" "en" &>/dev/null &
                 [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
+                (( streak++ ))
+                [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound "$streak" &
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
@@ -706,10 +725,14 @@ PYEOF
                     echo "$last_msg"
                     [ "$audio" -ge 1 ] && speak "$eng" "en" &>/dev/null &
                     [ "$audio" -ge 2 ] && speak "$reply" "tr" &>/dev/null &
+                    (( streak++ ))
+                    [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound "$streak" &
                     (( correct++ ))
                 else
                     last_msg="${RED}✗   $eng -> $all${RESET}"
                     echo "$last_msg"
+                    [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound 0 &
+                    streak=0
                 fi
                 (( i++ ))
             fi
@@ -732,6 +755,8 @@ PYEOF
                 echo "$last_msg"
                 [ "$audio" -ge 1 ] && speak "$reply" "en" &>/dev/null &
                 [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
+                (( streak++ ))
+                [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound "$streak" &
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
@@ -741,6 +766,8 @@ PYEOF
             else
                 last_msg="${RED}✗   $tur -> $all${RESET}"
                 echo "$last_msg"
+                [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound 0 &
+                streak=0
                 (( i++ ))
             fi
         fi
