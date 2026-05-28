@@ -624,23 +624,21 @@ _close_enough() {
 }
 
 _quake_sound() {
-    local streak="$1" phrase
-    if [ "$streak" -eq 0 ]; then
-        phrase="Humiliation"
-    elif [ "$streak" -ge 5 ]; then
-        phrase="Godlike"
-    elif [ "$streak" -ge 4 ]; then
-        phrase="Impressive"
-    elif [ "$streak" -ge 3 ]; then
-        phrase="Excellent"
-    else
-        phrase="Double Kill"
-    fi
-    speak "$phrase" "en" &>/dev/null &
+    local streak="$1" phrase file cachedir="$HOME/.cache/vocab/quakesounds"
+    case "$streak" in
+        0)  phrase="humiliation"    ;;
+        2)  phrase="double-kill"    ;;
+        3)  phrase="excellent"      ;;
+        4)  phrase="impressive"     ;;
+        *)  phrase="godlike"        ;;
+    esac
+    file="$cachedir/$phrase.mp3"
+    [ -f "$file" ] || mkdir -p "$cachedir" && curl -sL "https://raw.githubusercontent.com/Ripnrip/Quake-Coding-Arena-MCP/main/sounds/male/$phrase.mp3" -o "$file"
+    [ -f "$file" ] && _play_audio "$file"
 }
 
 cmd_quiz() {
-    local count limit="" reverse=0 audio=0
+    local count limit="" reverse=0 audio=0 quake=0
     count=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
     [ "$count" -eq 0 ] && { echo "no words yet." >&2; exit 1; }
 
@@ -697,10 +695,15 @@ cmd_quiz() {
             if [ "$found" = 1 ]; then
                 last_msg="${GREEN}✓   $eng -> $all${RESET}"
                 echo "$last_msg"
-                [ "$audio" -ge 1 ] && speak "$eng" "en" &>/dev/null &
-                [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
                 (( streak++ ))
-                [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound "$streak" &
+                if [ "$quake" = 1 -a "$streak" -ge 2 ]; then
+                    [ "$audio" -ge 1 ] && speak "$eng" "en"
+                    [ "$audio" -ge 2 ] && speak "$tur" "tr"
+                    _quake_sound "$streak"
+                elif [ "$audio" -ge 1 ]; then
+                    speak "$eng" "en" &>/dev/null &
+                    [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
+                fi
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
@@ -723,15 +726,19 @@ PYEOF
                 if [ "$synonym" = "ACCEPT" ]; then
                     last_msg="${GREEN}✓   $eng -> $reply (synonym accepted)${RESET}"
                     echo "$last_msg"
-                    [ "$audio" -ge 1 ] && speak "$eng" "en" &>/dev/null &
-                    [ "$audio" -ge 2 ] && speak "$reply" "tr" &>/dev/null &
                     (( streak++ ))
-                    [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound "$streak" &
+                    if [ "$quake" = 1 -a "$streak" -ge 2 ]; then
+                        [ "$audio" -ge 1 ] && speak "$eng" "en"
+                        [ "$audio" -ge 2 ] && speak "$reply" "tr"
+                        _quake_sound "$streak"
+                    elif [ "$audio" -ge 1 ]; then
+                        speak "$eng" "en" &>/dev/null &
+                        [ "$audio" -ge 2 ] && speak "$reply" "tr" &>/dev/null &
+                    fi
                     (( correct++ ))
                 else
                     last_msg="${RED}✗   $eng -> $all${RESET}"
                     echo "$last_msg"
-                    [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound 0 &
                     streak=0
                 fi
                 (( i++ ))
@@ -753,10 +760,15 @@ PYEOF
             if [ "$found" = 1 ]; then
                 last_msg="${GREEN}✓   $tur -> $all${RESET}"
                 echo "$last_msg"
-                [ "$audio" -ge 1 ] && speak "$reply" "en" &>/dev/null &
-                [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
                 (( streak++ ))
-                [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound "$streak" &
+                if [ "$quake" = 1 -a "$streak" -ge 2 ]; then
+                    [ "$audio" -ge 1 ] && speak "$reply" "en"
+                    [ "$audio" -ge 2 ] && speak "$tur" "tr"
+                    _quake_sound "$streak"
+                elif [ "$audio" -ge 1 ]; then
+                    speak "$reply" "en" &>/dev/null &
+                    [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
+                fi
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
@@ -766,7 +778,6 @@ PYEOF
             else
                 last_msg="${RED}✗   $tur -> $all${RESET}"
                 echo "$last_msg"
-                [ "$quake" = 1 -a "$streak" -ge 2 ] && _quake_sound 0 &
                 streak=0
                 (( i++ ))
             fi
