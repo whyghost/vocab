@@ -624,7 +624,7 @@ _close_enough() {
 }
 
 cmd_quiz() {
-    local count limit="" reverse=0
+    local count limit="" reverse=0 audio=0
     count=$(sqlite3 "$DB" "SELECT COUNT(*) FROM vocabulary;")
     [ "$count" -eq 0 ] && { echo "no words yet." >&2; exit 1; }
 
@@ -632,6 +632,7 @@ cmd_quiz() {
         case "$1" in
             --count) shift; limit="$1"; shift ;;
             --reverse) reverse=1; shift ;;
+            --audio) audio=1; shift ;;
             *) break ;;
         esac
     done
@@ -678,6 +679,7 @@ cmd_quiz() {
             if [ "$found" = 1 ]; then
                 last_msg="${GREEN}✓   $eng -> $all${RESET}"
                 echo "$last_msg"
+                [ "$audio" = 1 ] && speak "$eng" "en" &>/dev/null &
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
@@ -700,6 +702,7 @@ PYEOF
                 if [ "$synonym" = "ACCEPT" ]; then
                     last_msg="${GREEN}✓   $eng -> $reply (synonym accepted)${RESET}"
                     echo "$last_msg"
+                    [ "$audio" = 1 ] && speak "$eng" "en" &>/dev/null &
                     (( correct++ ))
                 else
                     last_msg="${RED}✗   $eng -> $all${RESET}"
@@ -724,6 +727,7 @@ PYEOF
             if [ "$found" = 1 ]; then
                 last_msg="${GREEN}✓   $tur -> $all${RESET}"
                 echo "$last_msg"
+                [ "$audio" = 1 ] && speak "$reply" "en" &>/dev/null &
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
