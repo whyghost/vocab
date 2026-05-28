@@ -99,7 +99,9 @@ except:
     sys.exit(0)
 PYEOF
 )
-    [ -n "$corrected" ] && echo "$corrected"
+    if [ -n "$corrected" ] && _close_enough "$word" "$corrected"; then
+        echo "$corrected"
+    fi
 }
 
 # text-to-speech using Google Translate TTS (primary) or espeak (fallback)
