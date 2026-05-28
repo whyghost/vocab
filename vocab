@@ -657,7 +657,13 @@ cmd_quiz() {
     trap 'sqlite3 "$DB" "INSERT INTO stats (mode, correct, total) VALUES ('"'"'quiz'"'"', $correct, $i);" 2>/dev/null; exit' INT
     while [ "$i" -lt "$total" ]; do
         clear
-        [ -n "$last_msg" ] && echo "$last_msg" && echo "────────────────────────"
+        [ -n "$last_msg" ] && echo "$last_msg"
+        echo "────────────────────────"
+        local wrong=$(( i - correct ))
+        echo -n "${GREEN}✓ $correct${RESET}/$i  ${RED}✗ $wrong${RESET}"
+        [ "$streak" -ge 2 ] && echo -n "  🔥$streak"
+        echo
+        echo "────────────────────────"
         local row eng tur
         if [ -n "$retry_row" ]; then
             row="$retry_row"; retry_row=""
