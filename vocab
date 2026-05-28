@@ -633,6 +633,7 @@ cmd_quiz() {
             --count) shift; limit="$1"; shift ;;
             --reverse) reverse=1; shift ;;
             --audio) audio=1; shift ;;
+            --audio-both) audio=2; shift ;;
             *) break ;;
         esac
     done
@@ -679,7 +680,8 @@ cmd_quiz() {
             if [ "$found" = 1 ]; then
                 last_msg="${GREEN}✓   $eng -> $all${RESET}"
                 echo "$last_msg"
-                [ "$audio" = 1 ] && speak "$eng" "en" &>/dev/null &
+                [ "$audio" -ge 1 ] && speak "$eng" "en" &>/dev/null &
+                [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
@@ -702,7 +704,8 @@ PYEOF
                 if [ "$synonym" = "ACCEPT" ]; then
                     last_msg="${GREEN}✓   $eng -> $reply (synonym accepted)${RESET}"
                     echo "$last_msg"
-                    [ "$audio" = 1 ] && speak "$eng" "en" &>/dev/null &
+                    [ "$audio" -ge 1 ] && speak "$eng" "en" &>/dev/null &
+                    [ "$audio" -ge 2 ] && speak "$reply" "tr" &>/dev/null &
                     (( correct++ ))
                 else
                     last_msg="${RED}✗   $eng -> $all${RESET}"
@@ -727,7 +730,8 @@ PYEOF
             if [ "$found" = 1 ]; then
                 last_msg="${GREEN}✓   $tur -> $all${RESET}"
                 echo "$last_msg"
-                [ "$audio" = 1 ] && speak "$reply" "en" &>/dev/null &
+                [ "$audio" -ge 1 ] && speak "$reply" "en" &>/dev/null &
+                [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
                 (( correct++ ))
                 (( i++ ))
             elif [ "$close" = 1 ]; then
