@@ -685,8 +685,26 @@ cmd_quiz() {
                 echo "$last_msg"
                 retry_row="$row"; retry_dir="$direction"
             else
-                last_msg="${RED}✗   $eng -> $all${RESET}"
-                echo "$last_msg"
+                local synonym
+                synonym=$(python3 - "$reply" "$eng" <<'PYEOF' 2>/dev/null
+import sys, urllib.request, urllib.parse, json
+reply = sys.argv[1]; eng = sys.argv[2]
+q = urllib.parse.quote(reply)
+url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=tr&tl=en&dt=t&q={q}"
+raw = urllib.request.urlopen(url, timeout=5).read()
+data = json.loads(raw.decode("utf-8"))
+out = data[0][0][0].strip()
+if out.upper() == eng.upper(): print("ACCEPT")
+PYEOF
+                )
+                if [ "$synonym" = "ACCEPT" ]; then
+                    last_msg="${GREEN}✓   $eng -> $reply (synonym accepted)${RESET}"
+                    echo "$last_msg"
+                    (( correct++ ))
+                else
+                    last_msg="${RED}✗   $eng -> $all${RESET}"
+                    echo "$last_msg"
+                fi
                 (( i++ ))
             fi
         else
