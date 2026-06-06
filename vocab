@@ -763,14 +763,18 @@ PYEOF
             ans=$(sqlite3 "$DB" "SELECT eng_word FROM vocabulary WHERE tur_word='$tur' ORDER BY eng_word;")
             all=$(echo "$ans" | paste -sd '/' -)
             read -rp "${YELLOW}$tur${RESET} ? " reply
-            local found=0 close=0 a
+            local found=0 close=0 a self=0
             while IFS= read -r a; do
                 [ "$reply" = "$a" ] && { found=1; break; }
                 _close_enough "$reply" "$a" && close=1
             done <<< "$ans"
             if [ "$found" != 1 ]; then
                 local rl="${reply,,}" tg="${tur,,}"
-                [ "$rl" != "$tg" ] && _close_enough "$reply" "$tur" && close=1
+                if [ "$rl" = "$tg" ]; then
+                    self=1
+                elif [[ "$tg" != *"$rl"* && "$rl" != *"$tg"* ]]; then
+                    _close_enough "$reply" "$tur" && close=1
+                fi
             fi
             if [ "$found" = 1 ]; then
                 last_msg="${GREEN}✓   $tur -> $all${RESET}"
@@ -790,6 +794,11 @@ PYEOF
                 last_msg="${YELLOW}🟡   $tur -> $all${RESET}"
                 echo "$last_msg"
                 retry_row="$row"; retry_dir="$direction"
+            elif [ "$self" = 1 ]; then
+                last_msg="${RED}✗   $tur -> $all${RESET}"
+                echo "$last_msg"
+                streak=0
+                (( i++ ))
             else
                 last_msg="${RED}✗   $tur -> $all${RESET}"
                 echo "$last_msg"
@@ -827,20 +836,27 @@ cmd_learn() {
                 local ans all
                 ans=$(sqlite3 "$DB" "SELECT tur_word FROM vocabulary WHERE eng_word='$eng' ORDER BY tur_word;")
                 all=$(echo "$ans" | paste -sd '/' -)
-                local found=0 close=0 a
+                local found=0 close=0 a self=0
                 while IFS= read -r a; do
                     [ "$reply" = "$a" ] && { found=1; break; }
                     _close_enough "$reply" "$a" && close=1
                 done <<< "$ans"
                 if [ "$found" != 1 ]; then
                     local rl="${reply,,}" eg="${eng,,}"
-                    [ "$rl" != "$eg" ] && _close_enough "$reply" "$eng" && close=1
+                    if [ "$rl" = "$eg" ]; then
+                        self=1
+                    elif [[ "$eg" != *"$rl"* && "$rl" != *"$eg"* ]]; then
+                        _close_enough "$reply" "$eng" && close=1
+                    fi
                 fi
                 if [ "$found" = 1 ]; then
                     echo "  ${GREEN}✓   $eng -> $all${RESET}"; (( correct++ ))
                     [ "$pass" -eq 1 ] && (( p1++ ))
                 elif [ "$close" = 1 ]; then
                     echo "  ${YELLOW}🟡   $eng -> $all${RESET}"
+                    new_wrong+=("$i")
+                elif [ "$self" = 1 ]; then
+                    echo "  ${RED}✗   $eng -> $all${RESET}"
                     new_wrong+=("$i")
                 else
                     echo "  ${RED}✗   $eng -> $all${RESET}"
@@ -852,20 +868,27 @@ cmd_learn() {
                 local ans all
                 ans=$(sqlite3 "$DB" "SELECT eng_word FROM vocabulary WHERE tur_word='$tur' ORDER BY eng_word;")
                 all=$(echo "$ans" | paste -sd '/' -)
-                local found=0 close=0 a
+                local found=0 close=0 a self=0
                 while IFS= read -r a; do
                     [ "$reply" = "$a" ] && { found=1; break; }
                     _close_enough "$reply" "$a" && close=1
                 done <<< "$ans"
                 if [ "$found" != 1 ]; then
                     local rl="${reply,,}" tg="${tur,,}"
-                    [ "$rl" != "$tg" ] && _close_enough "$reply" "$tur" && close=1
+                    if [ "$rl" = "$tg" ]; then
+                        self=1
+                    elif [[ "$tg" != *"$rl"* && "$rl" != *"$tg"* ]]; then
+                        _close_enough "$reply" "$tur" && close=1
+                    fi
                 fi
                 if [ "$found" = 1 ]; then
                     echo "  ${GREEN}✓   $tur -> $all${RESET}"; (( correct++ ))
                     [ "$pass" -eq 1 ] && (( p1++ ))
                 elif [ "$close" = 1 ]; then
                     echo "  ${YELLOW}🟡   $tur -> $all${RESET}"
+                    new_wrong+=("$i")
+                elif [ "$self" = 1 ]; then
+                    echo "  ${RED}✗   $tur -> $all${RESET}"
                     new_wrong+=("$i")
                 else
                     echo "  ${RED}✗   $tur -> $all${RESET}"
