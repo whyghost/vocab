@@ -647,7 +647,6 @@ cmd_quiz() {
             --count) shift; limit="$1"; shift ;;
             --reverse) reverse=1; shift ;;
             --audio) audio=1; shift ;;
-            --audio-both) audio=2; shift ;;
             --quake) quake=1; shift ;;
             *) break ;;
         esac
@@ -708,11 +707,9 @@ cmd_quiz() {
                 (( streak++ ))
                 if [ "$quake" = 1 -a "$streak" -ge 2 ]; then
                     [ "$audio" -ge 1 ] && speak "$eng" "en"
-                    [ "$audio" -ge 2 ] && speak "$tur" "tr"
                     _quake_sound "$streak"
                 elif [ "$audio" -ge 1 ]; then
-                    speak "$eng" "en" &>/dev/null &
-                    [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
+                    speak "$eng" "en" &>/dev/null & &>/dev/null &
                 fi
                 (( correct++ ))
                 (( i++ ))
@@ -782,11 +779,9 @@ PYEOF
                 (( streak++ ))
                 if [ "$quake" = 1 -a "$streak" -ge 2 ]; then
                     [ "$audio" -ge 1 ] && speak "$reply" "en"
-                    [ "$audio" -ge 2 ] && speak "$tur" "tr"
                     _quake_sound "$streak"
                 elif [ "$audio" -ge 1 ]; then
-                    speak "$reply" "en" &>/dev/null &
-                    [ "$audio" -ge 2 ] && speak "$tur" "tr" &>/dev/null &
+                    speak "$reply" "en" &>/dev/null & &>/dev/null &
                 fi
                 (( correct++ ))
                 (( i++ ))
