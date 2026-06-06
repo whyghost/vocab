@@ -689,14 +689,18 @@ cmd_quiz() {
             ans=$(sqlite3 "$DB" "SELECT tur_word FROM vocabulary WHERE eng_word='$eng' ORDER BY tur_word;")
             all=$(echo "$ans" | paste -sd '/' -)
             read -rp "${YELLOW}$eng${RESET} ? " reply
-            local found=0 close=0 a
+            local found=0 close=0 a self=0
             while IFS= read -r a; do
                 [ "$reply" = "$a" ] && { found=1; break; }
                 _close_enough "$reply" "$a" && close=1
             done <<< "$ans"
             if [ "$found" != 1 ]; then
                 local rl="${reply,,}" eg="${eng,,}"
-                [ "$rl" != "$eg" ] && _close_enough "$reply" "$eng" && close=1
+                if [ "$rl" = "$eg" ]; then
+                    self=1
+                elif [[ "$eg" != *"$rl"* && "$rl" != *"$eg"* ]]; then
+                    _close_enough "$reply" "$eng" && close=1
+                fi
             fi
             if [ "$found" = 1 ]; then
                 last_msg="${GREEN}✓   $eng -> $all${RESET}"
@@ -716,6 +720,11 @@ cmd_quiz() {
                 last_msg="${YELLOW}🟡   $eng -> $all${RESET}"
                 echo "$last_msg"
                 retry_row="$row"; retry_dir="$direction"
+            elif [ "$self" = 1 ]; then
+                last_msg="${RED}✗   $eng -> $all${RESET}"
+                echo "$last_msg"
+                streak=0
+                (( i++ ))
             else
                 local synonym
                 synonym=$(python3 - "$reply" "$eng" <<'PYEOF' 2>/dev/null
